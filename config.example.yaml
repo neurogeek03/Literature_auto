@@ -1,0 +1,36 @@
+# Copy to config.yaml and adjust. config.yaml is gitignored.
+
+vault:
+  path: /Users/marlenfaf/Desktop/UofT_PhD/literature_auto
+  notes_subdir: ""          # "" = notes at vault root; or e.g. "papers"
+  topics_subdir: topics     # topic hub stubs live here
+
+slack:
+  channel_id: ""            # private channel ID (Cxxxxxxxx), filled after app setup
+
+fulltext:
+  min_words: 1000           # sufficiency gate: below this -> ask for the full PDF
+
+related:
+  model: BAAI/bge-small-en-v1.5
+  top_k: 5
+  min_similarity: 0.55
+  index_path: .cache/vault_index.json
+
+node:
+  claude_bin: /opt/homebrew/bin/claude   # absolute path (launchd has a minimal PATH)
+  model: claude-sonnet-4-6
+  skill: paper-node
+  timeout_seconds: 180
+
+metadata:
+  crossref_mailto: marlenfafouti@gmail.com   # Crossref polite pool
+  unpaywall_email: marlenfafouti@gmail.com   # Unpaywall OA lookup
+
+drive:
+  enabled: false
+  folder_id: ""             # NotebookLM staging folder (opt-in)
+
+paths:
+  work_dir: .cache/work     # transient downloaded PDFs
+  state_file: state.json    # last-processed Slack timestamp

@@ -1,0 +1,24 @@
+[project]
+name = "paper-pipeline"
+version = "0.1.0"
+description = "Deterministic Slack -> Obsidian paper pipeline (full text as Markdown, Sonnet key-points node, topic knowledge graph)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "slack-bolt>=1.20",
+    "pymupdf4llm>=0.0.17",
+    "requests>=2.31",
+    "fastembed>=0.4",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+drive = [
+    "google-api-python-client>=2.0",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.2",
+]
+
+[tool.uv]
+package = false
