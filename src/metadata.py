@@ -17,6 +17,9 @@ DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
 
 
+PREPRINT_VENUES = {"biorxiv", "medrxiv", "arxiv", "chemrxiv", "ssrn", "researchsquare"}
+
+
 @dataclass
 class PaperMeta:
     title: str = ""
@@ -28,6 +31,7 @@ class PaperMeta:
     url: str = ""
     oa_pdf_url: str = ""
     citekey: str = ""
+    is_preprint: bool = False
 
 
 def find_doi(text: str) -> str:
@@ -85,6 +89,7 @@ def fetch_crossref(doi: str) -> PaperMeta | None:
     venue = " ".join(m.get("container-title") or []).strip()
     abstract = _strip_tags(m.get("abstract", ""))
 
+    is_preprint = m.get("type") == "posted-content"
     return PaperMeta(
         title=title,
         authors=authors,
@@ -93,6 +98,7 @@ def fetch_crossref(doi: str) -> PaperMeta | None:
         abstract=abstract,
         doi=doi,
         url=m.get("URL", f"https://doi.org/{doi}"),
+        is_preprint=is_preprint,
     )
 
 
@@ -133,6 +139,7 @@ def fetch_openalex(doi: str) -> PaperMeta | None:
         doi=doi,
         url=w.get("id", f"https://doi.org/{doi}"),
         oa_pdf_url=(oa.get("pdf_url") or "") if isinstance(oa, dict) else "",
+        is_preprint=w.get("type") == "preprint",
     )
 
 
@@ -160,6 +167,7 @@ def fetch_biorxiv(doi: str) -> PaperMeta | None:
                 abstract=d.get("abstract", "").strip(),
                 doi=doi,
                 url=base_url,
+                is_preprint=True,
             )
         except Exception:
             continue
@@ -213,6 +221,7 @@ def get_metadata(doi: str = "", pdf_text: str = "") -> PaperMeta:
             meta.venue = meta.venue or oa.venue
             if not meta.authors:
                 meta.authors = oa.authors
+            meta.is_preprint = meta.is_preprint or oa.is_preprint
         elif oa and not meta:
             meta = oa
         # Preprints (biorxiv/medrxiv) are often absent from Crossref/OpenAlex.
@@ -229,6 +238,10 @@ def get_metadata(doi: str = "", pdf_text: str = "") -> PaperMeta:
             if len(line) > 15:
                 meta.title = line
                 break
+
+    # Venue-name fallback: catch preprints that lack a typed field.
+    if not meta.is_preprint and meta.venue:
+        meta.is_preprint = any(v in meta.venue.lower() for v in PREPRINT_VENUES)
 
     meta.citekey = make_citekey(meta)
     return meta

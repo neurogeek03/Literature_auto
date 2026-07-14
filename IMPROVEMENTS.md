@@ -177,6 +177,28 @@ creates an Obsidian note.
 
 ---
 
+---
+
+## 6. Preprint vs peer-reviewed node colouring in Obsidian graph
+
+**Idea:** Paper nodes in the Obsidian graph view are visually distinct by publication type:
+preprints appear grey-ish; peer-reviewed papers appear off-white.
+
+**Implementation (done):**
+- `PaperMeta.is_preprint` flag added to `metadata.py`. Detected from:
+  - Crossref `type == "posted-content"`
+  - OpenAlex `type == "preprint"`
+  - `fetch_biorxiv` (always preprint)
+  - Venue-name fallback (bioRxiv, medRxiv, arXiv, chemRxiv, SSRN, Research Square)
+- `pub_type` frontmatter field + tag added to every note (`preprint` or `peer-reviewed`).
+- `graph.json` in the vault gains two color groups:
+  - `tag:#preprint` → #9E9E9E (grey, rgb 10395294)
+  - `tag:#peer-reviewed` → #F0EDE6 (off-white, rgb 15789542)
+
+**Status:** Implemented.
+
+---
+
 ## Priority order (suggested)
 
 | # | Item | Effort | Value | Suggested order |
@@ -186,3 +208,4 @@ creates an Obsidian note.
 | 4 | Prompt parsing (conference tag + focus hint) | Medium | High | 3rd |
 | 1 | PDF rename convention | Low–Medium | Medium | 4th |
 | 5 | Poster image support | High | Medium | 5th |
+| 6 | Preprint/peer-reviewed graph colouring | Low | Low–Medium | Done |

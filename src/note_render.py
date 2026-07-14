@@ -36,6 +36,7 @@ def render(
     code = ", ".join(code_links)
     node_md = node.bullets if node.bullets else "- (no key points extracted)"
 
+    pub_type = "preprint" if meta.is_preprint else "peer-reviewed"
     values = {
         "CITEKEY": meta.citekey,
         "YEAR": meta.year,
@@ -51,6 +52,7 @@ def render(
         "AUTHORS": "; ".join(meta.authors),
         "VENUE": _one_line(meta.venue),
         "FULLTEXT": fulltext_md.strip(),
+        "PUB_TYPE": pub_type,
     }
     md = _TEMPLATE.read_text()
     for key, val in values.items():

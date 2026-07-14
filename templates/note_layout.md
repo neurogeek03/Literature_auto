@@ -1,6 +1,7 @@
 ---
 category: literaturenote
-tags: 
+tags: [{{PUB_TYPE}}]
+pub_type: {{PUB_TYPE}}
 citekey: {{CITEKEY}}
 status: unread
 dateread: 
