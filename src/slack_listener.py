@@ -7,8 +7,11 @@ Run:  uv run python -m src.slack_listener
 from __future__ import annotations
 
 import json
+import logging
 import os
+import socket
 import threading
+import time
 from pathlib import Path
 
 import requests
@@ -227,6 +230,23 @@ def _resolve_landing_page(url: str) -> tuple[str, str]:
     return _meta("citation_doi"), _meta("citation_pdf_url")
 
 
+# ----- network readiness -----
+
+def _wait_for_network(host: str = "slack.com", port: int = 443, timeout: int = 120) -> None:
+    """Block until DNS resolves host, retrying every 5 s. Prevents the flood of
+    'nodename nor servname provided' errors that slack_bolt emits when launchd
+    starts this process before the network is up (boot or wake-from-sleep)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            socket.getaddrinfo(host, port)
+            return
+        except socket.gaierror:
+            logging.warning("Network not ready, retrying in 5 s…")
+            time.sleep(5)
+    logging.error("Network did not become available after %d s — proceeding anyway.", timeout)
+
+
 # ----- entrypoint -----
 
 def run() -> None:
@@ -235,6 +255,7 @@ def run() -> None:
 
     from . import catchup
 
+    _wait_for_network()
     app = App(token=_bot_token())
 
     @app.event("message")

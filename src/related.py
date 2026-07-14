@@ -23,9 +23,12 @@ _ABSTRACT_RE = re.compile(r"\[!Abstract\][^\n]*\n>\s?(.+)")
 def _model():
     global _MODEL
     if _MODEL is None:
+        from pathlib import Path
+
         from fastembed import TextEmbedding
 
-        _MODEL = TextEmbedding(model_name=CONFIG["related"]["model"])
+        cache_dir = str(Path.home() / ".cache" / "fastembed")
+        _MODEL = TextEmbedding(model_name=CONFIG["related"]["model"], cache_dir=cache_dir)
     return _MODEL
 
 

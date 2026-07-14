@@ -37,6 +37,7 @@ forever.
   `slack_post.py`, never a silent no-op.
 - **Fail safe.** Retry rather than drop work; the paper stays in Slack and can be
   re-dropped.
+- **Environment** Always use the directory native uv env
 
 ## Environment
 
