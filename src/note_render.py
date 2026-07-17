@@ -33,7 +33,10 @@ def render(
         preprint_link = f"> [DOI](https://doi.org/{meta.doi})" if meta.doi else ""
     topics = " ".join(f"[[topics/{t}]]" for t in node.topics)
     related = ", ".join(f"[[@{ck}]]" for ck in related_keys)
-    code = ", ".join(code_links)
+    code_section = (
+        "### Code\n" + "\n".join(f"- {url}" for url in code_links)
+        if code_links else ""
+    )
     node_md = node.bullets if node.bullets else "- (no key points extracted)"
 
     pub_type = "preprint" if meta.is_preprint else "peer-reviewed"
@@ -46,7 +49,7 @@ def render(
         "TITLE": _one_line(meta.title),
         "TOPICS": topics,
         "RELATED": related,
-        "CODE": code,
+        "CODE_SECTION": code_section,
         "NODE": node_md,
         "ABSTRACT": _one_line(meta.abstract) or "(no abstract available)",
         "AUTHORS": "; ".join(meta.authors),

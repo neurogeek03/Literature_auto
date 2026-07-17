@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -126,18 +127,27 @@ def handle_event(client, event: dict) -> None:
 
     pdfs = [f for f in files if (f.get("filetype") == "pdf" or f.get("name", "").lower().endswith(".pdf"))]
 
+    if not pdfs and not text.strip():
+        save_last_ts(ts)  # empty/system message: nothing to do, safe to skip past.
+        return
+
     try:
         if pdfs:
             for f in pdfs:
                 pdf = download_slack_file(f)
                 _run_and_reply(client, channel, ts, pdf)
-        elif text.strip():
-            _handle_text(client, channel, ts, text)
         else:
-            return
-        _react(client, channel, ts)
-    finally:
-        save_last_ts(ts)
+            _handle_text(client, channel, ts, text)
+    except Exception:
+        # Fail safe: leave the timestamp and the reaction untouched so catchup
+        # re-attempts this message. Advancing state on failure silently drops work.
+        logging.exception("Failed to process message ts=%s; leaving it for catchup to retry.", ts)
+        return
+
+    # Only mark done (reaction + state) once we've genuinely handled it — including
+    # the branches that reply asking for the PDF, which count as a response.
+    _react(client, channel, ts)
+    save_last_ts(ts)
 
 
 def _run_and_reply(client, channel: str, ts: str, pdf: Path, doi: str = "") -> None:
@@ -168,11 +178,22 @@ def _handle_text(client, channel: str, ts: str, text: str) -> None:
     if url:
         doi, page_pdf = _resolve_landing_page(url)
 
-    # 3. A bare DOI in the message text.
-    doi = doi or metadata.find_doi(text)
+    # 3. A bare DOI in the message text or embedded in the URL itself.
+    doi = doi or metadata.find_doi(text) or metadata.find_doi(url)
 
     if not doi and not page_pdf:
-        return  # not a paper reference; ignore quietly.
+        if url:
+            # A link was shared but we couldn't extract a DOI or PDF from it —
+            # typically a Cloudflare/anti-bot publisher page (e.g. OUP, Wiley).
+            # Never silently drop it: tell the user so they can drop the PDF.
+            slack_post.send(
+                client, channel,
+                "Couldn't read that page (the publisher blocked automated access "
+                "and no DOI was in the link) — open it with your credentials and "
+                "drop the PDF here.",
+                thread_ts=ts,
+            )
+        return  # no URL at all: ordinary chatter, ignore quietly.
 
     # Try the publisher's own PDF link first, then an open-access copy (OpenAlex/
     # Unpaywall). A paywall page masquerading as a PDF fails the magic-byte check
@@ -233,18 +254,63 @@ def _resolve_landing_page(url: str) -> tuple[str, str]:
 # ----- network readiness -----
 
 def _wait_for_network(host: str = "slack.com", port: int = 443, timeout: int = 120) -> None:
-    """Block until DNS resolves host, retrying every 5 s. Prevents the flood of
-    'nodename nor servname provided' errors that slack_bolt emits when launchd
-    starts this process before the network is up (boot or wake-from-sleep)."""
+    """Block until a full TLS handshake to host succeeds, retrying every 5 s.
+    DNS-only checks pass too early on wake-from-sleep; the SSL handshake catches
+    captive-portal interception and other half-up network states."""
+    import ssl
+
+    ctx = ssl.create_default_context()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            socket.getaddrinfo(host, port)
-            return
-        except socket.gaierror:
-            logging.warning("Network not ready, retrying in 5 s…")
+            with socket.create_connection((host, port), timeout=5) as raw:
+                with ctx.wrap_socket(raw, server_hostname=host):
+                    return  # full TLS handshake succeeded
+        except Exception:
+            logging.warning("Network not ready (TLS), retrying in 5 s…")
             time.sleep(5)
     logging.error("Network did not become available after %d s — proceeding anyway.", timeout)
+
+
+# ----- self-healing watchdog -----
+
+_last_healthy = time.monotonic()
+
+
+def _record_healthy() -> None:
+    global _last_healthy
+    _last_healthy = time.monotonic()
+
+
+def _start_watchdog(client, ping_interval: int = 60, max_gap: int = 300) -> None:
+    """Two daemon threads:
+    • pinger  — calls auth_test() every ping_interval s; updates _last_healthy on success.
+    • watchdog — exits the process if _last_healthy is stale for > max_gap s.
+    launchd (KeepAlive=true) immediately restarts the process, which then runs
+    _wait_for_network() and reconnects cleanly once the network is actually ready.
+    """
+    def _pinger():
+        while True:
+            time.sleep(ping_interval)
+            try:
+                client.auth_test()
+                _record_healthy()
+            except Exception:
+                pass
+
+    def _watchdog():
+        time.sleep(max_gap)  # give the process time to connect on first start
+        while True:
+            if time.monotonic() - _last_healthy > max_gap:
+                logging.error(
+                    "Slack connection unhealthy for >%ds — exiting so launchd can restart cleanly.",
+                    max_gap,
+                )
+                os._exit(1)  # sys.exit() from a daemon thread doesn't kill the process
+            time.sleep(30)
+
+    threading.Thread(target=_pinger, daemon=True, name="slack-pinger").start()
+    threading.Thread(target=_watchdog, daemon=True, name="slack-watchdog").start()
 
 
 # ----- entrypoint -----
@@ -256,14 +322,17 @@ def run() -> None:
     from . import catchup
 
     _wait_for_network()
+    _record_healthy()
     app = App(token=_bot_token())
 
     @app.event("message")
     def on_message(event, client):
+        _record_healthy()
         threading.Thread(target=handle_event, args=(client, event), daemon=True).start()
 
-    # Reconcile anything dropped while we were offline, then go live.
     catchup.run_catchup(app.client)
+    _record_healthy()
+    _start_watchdog(app.client)
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
 
 

@@ -11,7 +11,7 @@ doi: {{DOI}}
 ## Link
 > [{{TITLE}}]({{DOI_URL}})
 {{PREPRINT_LINK}}
-
+{{CODE_SECTION}}
 
 > [!Connections]
 > **Contribution**:: 
@@ -19,8 +19,6 @@ doi: {{DOI}}
 > **Topics**:: {{TOPICS}}
 >
 > **Related**:: {{RELATED}}
->
-> **Code**:: {{CODE}}
 
 # Key Points
 %% node:start %%
