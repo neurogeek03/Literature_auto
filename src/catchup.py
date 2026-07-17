@@ -40,3 +40,22 @@ def run_catchup(client) -> int:
         sl.handle_event(client, msg)
         processed += 1
     return processed
+
+
+def main() -> None:
+    """Standalone entry point for the periodic launchd timer. Builds a Web-API-only
+    Slack client (no Socket Mode) and reconciles anything the live listener missed.
+    Safe to run alongside the listener: the MARKER reaction dedups already-processed
+    messages, and note writes are idempotent."""
+    import logging
+
+    from slack_bolt import App
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    app = App(token=sl._bot_token())
+    n = run_catchup(app.client)
+    logging.info("periodic catchup processed %d message(s)", n)
+
+
+if __name__ == "__main__":
+    main()

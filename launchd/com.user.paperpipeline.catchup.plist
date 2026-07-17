@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.paperpipeline.catchup</string>
+
+  <!-- Socket-independent safety net: every hour, reconcile anything the live
+       listener missed (e.g. if its WebSocket wedged). Reads Slack history over
+       the Web API since state.json last_ts; the MARKER reaction dedups. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/marlenfaf/Desktop/Automation Ideas/Papers/paper-pipeline/.venv/bin/python</string>
+    <string>-m</string>
+    <string>src.catchup</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/marlenfaf/Desktop/Automation Ideas/Papers/paper-pipeline</string>
+
+  <!-- launchd starts with a minimal PATH; add Homebrew so `claude` is found. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONPATH</key>
+    <string>/Users/marlenfaf/Desktop/Automation Ideas/Papers/paper-pipeline</string>
+  </dict>
+
+  <!-- Run once every hour. Not RunAtLoad: the listener already runs catchup on
+       its own startup, so skip the duplicate burst at login. -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/marlenfaf/Desktop/Automation Ideas/Papers/paper-pipeline/.cache/catchup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/marlenfaf/Desktop/Automation Ideas/Papers/paper-pipeline/.cache/catchup.err.log</string>
+</dict>
+</plist>

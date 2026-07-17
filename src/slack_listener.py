@@ -282,28 +282,37 @@ def _record_healthy() -> None:
     _last_healthy = time.monotonic()
 
 
-def _start_watchdog(client, ping_interval: int = 60, max_gap: int = 300) -> None:
-    """Two daemon threads:
-    • pinger  — calls auth_test() every ping_interval s; updates _last_healthy on success.
-    • watchdog — exits the process if _last_healthy is stale for > max_gap s.
+def _start_watchdog(handler, ping_interval: int = 60, max_gap: int = 300) -> None:
+    """Two daemon threads that recycle a wedged process:
+    • pinger  — every ping_interval s, checks whether the Socket Mode WebSocket is
+      actually connected; updates _last_healthy only while it is.
+    • watchdog — exits the process if the socket has been down for > max_gap s.
     launchd (KeepAlive=true) immediately restarts the process, which then runs
     _wait_for_network() and reconnects cleanly once the network is actually ready.
+
+    Checking socket liveness (not client.auth_test(), which hits the Slack Web API
+    over a *separate* HTTPS connection) is the whole point. After wake-from-sleep
+    the Web API recovers while the WebSocket can stay stuck in a broken reconnect
+    loop, silently receiving no events — auth_test() stayed green and masked that.
     """
+    def _socket_alive() -> bool:
+        try:
+            return bool(handler.client.is_connected())
+        except Exception:
+            return False
+
     def _pinger():
         while True:
             time.sleep(ping_interval)
-            try:
-                client.auth_test()
+            if _socket_alive():
                 _record_healthy()
-            except Exception:
-                pass
 
     def _watchdog():
-        time.sleep(max_gap)  # give the process time to connect on first start
+        time.sleep(max_gap)  # give the socket time to connect on first start
         while True:
             if time.monotonic() - _last_healthy > max_gap:
                 logging.error(
-                    "Slack connection unhealthy for >%ds — exiting so launchd can restart cleanly.",
+                    "Socket Mode connection down for >%ds — exiting so launchd can restart cleanly.",
                     max_gap,
                 )
                 os._exit(1)  # sys.exit() from a daemon thread doesn't kill the process
@@ -332,8 +341,9 @@ def run() -> None:
 
     catchup.run_catchup(app.client)
     _record_healthy()
-    _start_watchdog(app.client)
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+    _start_watchdog(handler)
+    handler.start()
 
 
 if __name__ == "__main__":
