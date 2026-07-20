@@ -2,8 +2,11 @@
 
 Drop a paper into a private Slack channel → it becomes a self-contained Obsidian
 literature note (full text as Markdown, a Sonnet key-points node, topic + related
-links) with a summary posted back to Slack. Design + rationale: `PLAN.md`.
-Orientation for Claude sessions: `CLAUDE.md`.
+links) with a summary posted back to Slack. Drop a photo of a conference poster
+or a talk slide instead, and the same channel produces a lighter note (the image
+embedded, 3-5 key-point bullets from a vision read, same topic graph) — no PDF
+or DOI needed. Design + rationale: `PLAN.md`. Orientation for Claude sessions:
+`CLAUDE.md`.
 
 ## Prerequisites
 
@@ -46,6 +49,9 @@ Create a private channel (e.g. `#papers`), then `/invite @your-app`. Get its ID
 ```
 # Offline core (no Slack): writes a note into the vault
 uv run python -m src.process_paper /path/to/a/paper.pdf
+
+# Offline core, poster/slide photo
+uv run python -m src.process_poster /path/to/a/poster.jpg --prompt "ISMB 26"
 
 # Live listener
 uv run python -m src.slack_listener

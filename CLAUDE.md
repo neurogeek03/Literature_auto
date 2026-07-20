@@ -85,6 +85,50 @@ forever.
 
 `build_index.py` maintains the vault embedding index incrementally.
 
+## Per-poster/slide flow
+
+Same channel, image drop instead of PDF/DOI (a conference poster photo or a
+photo of a talk slide — no PDF, no DOI, no fulltext exists for either).
+
+1. Slack drop (image; mimetype `image/*` or a known image extension) → download.
+2. HEIC/HEIF (iPhone default) → JPG via macOS `sips`.
+3. `poster_node.py`: headless `claude -p "/poster-node" --model claude-sonnet-4-6
+   --allowedTools Read` — the prompt gives an absolute image path and the skill
+   Reads it directly (vision). `--allowedTools Read` is load-bearing: it
+   pre-authorizes the one tool call needed so an unattended run never blocks on
+   a permission prompt. Returns TITLE/AUTHORS/VENUE/SOURCE_TYPE (poster vs
+   slide) + 3-5 key-point bullets + 1-3 topics (same vocabulary as `paper-node`).
+4. Citekey: `Author_Year` if the image has a legible author list, else
+   `Poster_CONFYEAR_ShortTitle`; year comes from the detected conference slug
+   when the image itself doesn't state one. A single talk slide often has no
+   printed author list at all — the user types the first author's name in the
+   Slack caption in that case, and the skill uses it (see the "Additional
+   context" instruction in the poster-node skill).
+   Dedup is on citekey via `note_render.poster_target_path()`: re-dropping the
+   same author's poster/slide (same `Author_Year`) **updates the existing note
+   in place** rather than creating a suffixed duplicate — intentional, since
+   there's no DOI to key off like papers have, and the point is one node per
+   person/theme you've seen. It only falls back to suffixing (`_a`, `_b`, ...)
+   when the colliding citekey belongs to an actual paper note (`pub_type`
+   `preprint`/`peer-reviewed`), so a poster drop never clobbers a real paper.
+5. Image copied into `<vault>/images/<citekey>.jpg` (fixed name per citekey, so
+   a re-drop overwrites the same file too), embedded in the note via
+   `![[filename]]`.
+6. `related.py`: embed title + key-point bullets (no abstract to embed for a
+   poster/slide — `extract_embed_text()` falls back to the Key Points block),
+   cosine over the same cached vault index used for papers.
+7. `note_render.write_poster_note()`: assemble + write `@<citekey>.md` from
+   `templates/poster_layout.md` (no fulltext/abstract section).
+8. `slack_post.py`: reply card — title, authors, venue, topics, related links,
+   note path.
+
+If the image is too low-res/blurry to extract confidently, the skill outputs
+`ERROR: <reason>` instead of the normal fields; the reply asks for a clearer
+photo, same shape as the PDF sufficiency gate.
+
+Offline CLI (no Slack): `uv run python -m src.process_poster /path/to/image.jpg
+[--prompt "ISMB 26 — caption/focus hint"]`.
+
 ## Runtime & availability
 
 Listener runs on the Mac (Socket Mode). Real-time processing needs the Mac awake;
@@ -99,12 +143,14 @@ because the vault write and the Sonnet node both live here.
 ```
 src/            pipeline modules (see PLAN.md for each)
 templates/      note_layout.md — derived from ZI_Template.md
+                poster_layout.md — poster/slide variant, no fulltext section
 launchd/        com.user.paperpipeline.listener.plist
 pyproject.toml  uv project + deps ; uv.lock ; .venv/ (gitignored)
 config.yaml     paths + settings (gitignored)
 .env            secrets (gitignored)
 state.json      last-processed Slack ts (gitignored)
-~/.claude/skills/paper-node/SKILL.md   the Sonnet extraction skill
+~/.claude/skills/paper-node/SKILL.md    the Sonnet extraction skill (papers)
+~/.claude/skills/poster-node/SKILL.md   the vision extraction skill (posters/slides)
 ```
 
 ## Status

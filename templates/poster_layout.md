@@ -1,17 +1,17 @@
 ---
 category: literaturenote
 tags: [{{TAGS}}]
-pub_type: {{PUB_TYPE}}
+pub_type: {{SOURCE_TYPE}}
 citekey: {{CITEKEY}}
 status: unread
 dateread: 
 year: {{YEAR}}
-doi: {{DOI}}
+doi: 
 ---
 ## Link
-> [{{TITLE}}]({{DOI_URL}})
-{{PREPRINT_LINK}}
-{{CODE_SECTION}}
+> {{SOURCE_LABEL}} — {{VENUE}}. No preprint/DOI available.
+
+![[{{IMAGE_FILENAME}}]]
 
 > [!Connections]
 > **Contribution**:: 
@@ -25,22 +25,10 @@ doi: {{DOI}}
 {{NODE}}
 %% node:end %%
 
-> [!Abstract]
-> {{ABSTRACT}}
-
 # Metadata
 > [!md]
 > **Authors**:: {{AUTHORS}}
 > **Title**:: {{TITLE}}
 > **Year**:: {{YEAR}}
-> **Journal**:: {{VENUE}}
+> **Venue**:: {{VENUE}}
 > **Citekey**:: {{CITEKEY}}
-> **DOI**:: {{DOI}}
-
-# Full text
-<details>
-<summary>Full text (Markdown)</summary>
-
-{{FULLTEXT}}
-
-</details>

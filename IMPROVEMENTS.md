@@ -24,7 +24,11 @@ No local PDF retention — the vault remains Markdown-only; this is Drive-only.
   optional/early). If keywords come from node output, staging must be deferred until after
   node generation — or the rename can be a separate Drive update call after the node is done.
 
-**Status:** Clarified (Drive-only rename). Open question: keyword source + timing.
+**Status:** Implemented. Keywords come from `paper-node` topics (up to 2), joined
+with the citekey: `<citekey>_<topic1>_<topic2>.pdf`. Timing question resolved by
+existing code — `_stage_notebooklm()` already runs after `process_pdf()` returns,
+so topics are available; no reordering needed. `drive.stage_pdf()` takes an
+optional `filename` override; `slack_listener._structured_filename()` builds it.
 
 ---
 
@@ -49,7 +53,14 @@ thread back to the original message `ts`.
 - Ensure `thread_ts` (the `ts` of the user's original message) is threaded through every
   pipeline stage so it's always available for error replies.
 
-**Status:** Under discussion.
+**Status:** Implemented. `process_pdf()` now wraps metadata fetch, code/related
+links, node generation, and note write each in try/except returning
+`Result(status="error", ...)`, which `slack_post.post_result()` already threads
+correctly. The one remaining gap — a truly unexpected exception outside
+`process_pdf()` (e.g. `download_slack_file()` failing) — now also posts an
+in-thread "something went wrong, retrying automatically" message from
+`handle_event()`'s outer except, instead of failing silently while `catchup.py`
+retries.
 
 ---
 
@@ -66,7 +77,16 @@ thread back to the original message `ts`.
 - `paper-node` SKILL.md needs the new entries added to the topic vocabulary so Sonnet
   knows they exist when assigning topics.
 
-**Status:** Ready to implement (straightforward stub creation + vocabulary update).
+**Status:** Implemented. `topics/ai-agents.md` created (using the vault's actual
+hyphenated naming convention — all 22 existing stubs use hyphens, not
+underscores, so this deviates from the `ai_agents.md` spelling above).
+`topics/conferences.md` umbrella stub created; sub-stubs
+(`topics/conferences/<slug>.md`) are auto-created on first use by
+`conference.ensure_stub()` (see #4) rather than pre-created here, since they
+depend on the whitelist. `paper-node` `SKILL.md` vocabulary updated with
+`ai-agents` + an example row. `conferences` is intentionally NOT in the
+skill's vocabulary — it's a deterministic tag parsed from the user's caption,
+never a Sonnet-selected topic.
 
 ---
 
@@ -131,7 +151,16 @@ auto-created on first use of a known slug.
 - Where in the note does the conference tag appear? Proposal: frontmatter `tags:` AND
   Connections block (so it shows up in both graph view and search).
 
-**Status:** Clarified (whitelist with fuzzy matching). Open question: note placement of tag.
+**Status:** Implemented (4a only — see #5 for the poster-image half of this
+item, still pending). New module `src/conference.py` implements the matching
+pipeline exactly as specced (exact → normalize → unique prefix/substring →
+focus-hint-only fallback) and `ensure_stub()`. `conferences:` whitelist added
+to `config.yaml`/`config.example.yaml`, seeded with the three example entries
+above. Caption text (`event["text"]`) is now threaded through on both the PDF
+and DOI/URL drop paths (previously discarded on the PDF path). Focus hint is
+prepended to the `paper-node` prompt in `node.run_node()`. Note placement
+resolved as proposed: the conference tag appears in both frontmatter `tags:`
+and the Connections **Topics** line.
 
 ---
 
@@ -173,7 +202,60 @@ creates an Obsidian note.
 - Is this worth the added complexity? Poster notes are lower-value than paper notes (less
   depth, often preliminary work). Recommend implementing only after #1–#4 are stable.
 
-**Status:** Confirmed — do after #1–#4 are stable.
+**Status:** Implemented. Covers both posters and single talk slides (same code path;
+the model classifies which one it's looking at). New modules: `src/poster_node.py`
+(the vision call) and `src/process_poster.py` (the orchestrator — image → note,
+mirrors `process_paper.py`). New skill `~/.claude/skills/poster-node/SKILL.md`,
+same topic vocabulary as `paper-node` so poster/slide nodes sit in the same graph.
+New template `templates/poster_layout.md` (no fulltext/abstract section — the
+image *is* the content, embedded via `![[filename]]`).
+
+Resolved open questions:
+- **Separate skill, not a flag** — `poster-node` outputs a different contract
+  (TITLE/AUTHORS/VENUE/SOURCE_TYPE fields the paper skill doesn't have) and reads
+  an image path instead of pasted fulltext; a shared skill would need heavy
+  branching for no real benefit.
+- **Vision call mechanics**: `claude -p` is given the absolute image path in the
+  prompt and told to Read it, with `--allowedTools Read` passed explicitly so the
+  one tool call it needs is pre-authorized — critical for the unattended/daemon
+  context, otherwise a permission prompt would hang forever. Verified working
+  end-to-end against real conference-poster photos (including raw HEIC input).
+- **Related-links**: yes, same code path. `related.extract_embed_text()` now
+  falls back to the Key Points block when there's no Abstract (true for every
+  poster/slide note), so cosine search over the vault index works unchanged.
+- **Low-res/unreadable image**: the skill outputs `ERROR: <reason>` instead of
+  the normal fields; `process_poster.process_image()` turns that into
+  `status="insufficient"` and the Slack reply asks for a clearer photo — same
+  shape as the PDF sufficiency gate in #2.
+- **Citekey**: `Author_Year` when the poster/slide has a legible author list
+  (common case), else `Poster_CONFYEAR_ShortTitle`. Year comes from the detected
+  conference slug (`ISMB_2026` → `2026`) when the poster itself doesn't state one.
+  For a single slide with no printed author list, the user supplies the first
+  author's name in the Slack caption and `poster-node` uses it — the skill's
+  AUTHORS instruction was updated to accept this ("Additional context from the
+  user") specifically because slides usually can't provide it from the image
+  alone.
+- **Dedup**: posters/slides dedupe on the citekey itself (first author + year)
+  via new `note_render.poster_target_path()`, *not* the paper flow's DOI-based
+  `target_path()`. Re-dropping the same author's poster/slide updates the
+  existing note in place rather than suffixing a duplicate — deliberate,
+  matching how the user actually uses this (one node per person/theme). It
+  still falls back to the normal `_a`/`_b`/... suffixing if the colliding
+  citekey belongs to a real paper note (`pub_type` preprint/peer-reviewed),
+  so a poster drop can never clobber an actual paper.
+- **HEIC/HEIF**: converted to JPG via macOS `sips` before both the vision call and
+  vault storage (iPhone camera default; Read/Obsidian portability both want JPG).
+
+New config: `vault.images_subdir` (default `images`) and `node.poster_skill`
+(default `poster-node`) in `config.yaml`/`config.example.yaml`.
+
+Not yet done: wiring through a live Slack round-trip (tested via the offline CLI
+— `uv run python -m src.process_poster /path/to/image.jpg [--prompt "..."]` —
+against a scratch vault, not the real one). `slack_listener.handle_event()` now
+detects image file drops (by `mimetype` or extension) and branches to
+`process_poster.process_image()`; `slack_post.post_poster_result()` posts the
+summary card. This reuses `catchup.py` for free since it just replays
+`handle_event()`. First real Slack drop should be treated as a smoke test.
 
 ---
 
@@ -203,9 +285,9 @@ preprints appear grey-ish; peer-reviewed papers appear off-white.
 
 | # | Item | Effort | Value | Suggested order |
 |---|---|---|---|---|
-| 2 | Error reporting in-thread | Low | High | 1st |
-| 3 | New topics (AI Agents, Conferences) | Very low | Medium | 2nd |
-| 4 | Prompt parsing (conference tag + focus hint) | Medium | High | 3rd |
-| 1 | PDF rename convention | Low–Medium | Medium | 4th |
-| 5 | Poster image support | High | Medium | 5th |
+| 2 | Error reporting in-thread | Low | High | Done |
+| 3 | New topics (AI Agents, Conferences) | Very low | Medium | Done |
+| 4 | Prompt parsing (conference tag + focus hint) | Medium | High | Done |
+| 1 | PDF rename convention | Low–Medium | Medium | Done |
+| 5 | Poster image support | High | Medium | Next |
 | 6 | Preprint/peer-reviewed graph colouring | Low | Low–Medium | Done |

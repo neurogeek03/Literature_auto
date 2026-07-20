@@ -57,6 +57,12 @@ def topics_dir() -> Path:
     return vault_dir() / (CONFIG["vault"].get("topics_subdir") or "topics")
 
 
+def images_dir() -> Path:
+    d = vault_dir() / (CONFIG["vault"].get("images_subdir") or "images")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def valid_topics() -> set[str]:
     """The vocabulary is the set of topic stub filenames in the vault."""
     td = topics_dir()

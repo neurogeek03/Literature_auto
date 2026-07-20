@@ -3,6 +3,7 @@ Single place every outcome surfaces, so nothing is a silent no-op."""
 from __future__ import annotations
 
 from .process_paper import Result
+from .process_poster import PosterProcResult
 
 NOTEBOOKLM_URL = "https://notebooklm.google.com/"
 
@@ -39,6 +40,33 @@ def format_result(result: Result, notebooklm_link: str | None = None) -> str:
     if notebooklm_link:
         lines.append(f"Podcast: <{notebooklm_link}|stage in NotebookLM>")
     return "\n".join(lines)
+
+
+def format_poster_result(result: PosterProcResult) -> str:
+    if result.status != "ok":
+        return result.message
+
+    label = "Poster" if result.source_type == "poster" else "Slide"
+    authors = (
+        "; ".join(result.authors[:4]) + (" et al." if len(result.authors) > 4 else "")
+        if result.authors else "authors not identified"
+    )
+    lines = [
+        f"*{result.title or '(untitled)'}*  _( {label} )_",
+        f"_{authors}_" + (f"  ·  {result.venue}" if result.venue else ""),
+    ]
+    if result.topics:
+        lines.append("Topics: " + ", ".join(f"`{t}`" for t in result.topics))
+    if result.related:
+        lines.append("Related: " + ", ".join(f"`@{r}`" for r in result.related))
+    lines.append(f"Note: <{_obsidian_uri(result.note_path)}|open in Obsidian>")
+    return "\n".join(lines)
+
+
+def post_poster_result(
+    client, channel: str, result: PosterProcResult, thread_ts: str | None = None
+) -> None:
+    send(client, channel, format_poster_result(result), thread_ts=thread_ts)
 
 
 def send(client, channel: str, text: str, thread_ts: str | None = None) -> None:

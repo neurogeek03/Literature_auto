@@ -20,8 +20,17 @@ import requests
 from . import drive, metadata, slack_post
 from .config import CONFIG, resolve_path
 from .process_paper import process_pdf
+from .process_poster import process_image
 
 MARKER = "white_check_mark"  # reaction added to a processed message (UX + dedup)
+
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".bmp", ".tiff"}
+
+
+def _is_image_file(f: dict) -> bool:
+    if (f.get("mimetype") or "").startswith("image/"):
+        return True
+    return Path(f.get("name", "")).suffix.lower() in _IMAGE_EXTS
 
 
 # ----- state (last-processed timestamp) -----
@@ -99,11 +108,21 @@ def _react(client, channel: str, ts: str) -> None:
         pass
 
 
-def _stage_notebooklm(pdf_path: Path) -> str | None:
+def _structured_filename(result) -> str:
+    """<Author>_<Year>_<Keyword1>_<Keyword2>.pdf from metadata + node topics
+    (both already resolved by the time staging runs, after process_pdf())."""
+    import re
+
+    parts = [result.meta.citekey] + list(result.topics[:2])
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", "_".join(parts)).strip("_")
+    return f"{name}.pdf"
+
+
+def _stage_notebooklm(pdf_path: Path, result) -> str | None:
     if not (CONFIG.get("drive") or {}).get("enabled"):
         return None
     try:
-        drive.stage_pdf(pdf_path)
+        drive.stage_pdf(pdf_path, filename=_structured_filename(result))
         return slack_post.NOTEBOOKLM_URL
     except Exception:
         return None
@@ -126,8 +145,9 @@ def handle_event(client, event: dict) -> None:
     text = event.get("text") or ""
 
     pdfs = [f for f in files if (f.get("filetype") == "pdf" or f.get("name", "").lower().endswith(".pdf"))]
+    images = [f for f in files if _is_image_file(f)]
 
-    if not pdfs and not text.strip():
+    if not pdfs and not images and not text.strip():
         save_last_ts(ts)  # empty/system message: nothing to do, safe to skip past.
         return
 
@@ -135,13 +155,29 @@ def handle_event(client, event: dict) -> None:
         if pdfs:
             for f in pdfs:
                 pdf = download_slack_file(f)
-                _run_and_reply(client, channel, ts, pdf)
+                _run_and_reply(client, channel, ts, pdf, prompt_text=text)
+        elif images:
+            for f in images:
+                img = download_slack_file(f)
+                _run_and_reply_poster(client, channel, ts, img, prompt_text=text)
         else:
             _handle_text(client, channel, ts, text)
-    except Exception:
+    except Exception as e:
         # Fail safe: leave the timestamp and the reaction untouched so catchup
         # re-attempts this message. Advancing state on failure silently drops work.
+        # This is a last-resort net for failures process_pdf() can't return as a
+        # Result (e.g. download_slack_file() failing before it's even called) —
+        # still tell the user rather than failing silently, even though we'll retry.
         logging.exception("Failed to process message ts=%s; leaving it for catchup to retry.", ts)
+        try:
+            slack_post.send(
+                client, channel,
+                f"Something went wrong processing this (`{type(e).__name__}: {e}`) "
+                "— I'll keep retrying automatically.",
+                thread_ts=ts,
+            )
+        except Exception:
+            pass  # Slack itself may be unreachable; nothing more we can do here.
         return
 
     # Only mark done (reaction + state) once we've genuinely handled it — including
@@ -150,10 +186,17 @@ def handle_event(client, event: dict) -> None:
     save_last_ts(ts)
 
 
-def _run_and_reply(client, channel: str, ts: str, pdf: Path, doi: str = "") -> None:
-    result = process_pdf(pdf, doi=doi)
-    nb = _stage_notebooklm(pdf) if result.status == "ok" else None
+def _run_and_reply(
+    client, channel: str, ts: str, pdf: Path, doi: str = "", prompt_text: str = ""
+) -> None:
+    result = process_pdf(pdf, doi=doi, prompt_text=prompt_text)
+    nb = _stage_notebooklm(pdf, result) if result.status == "ok" else None
     slack_post.post_result(client, channel, result, thread_ts=ts, notebooklm_link=nb)
+
+
+def _run_and_reply_poster(client, channel: str, ts: str, image: Path, prompt_text: str = "") -> None:
+    result = process_image(image, prompt_text=prompt_text)
+    slack_post.post_poster_result(client, channel, result, thread_ts=ts)
 
 
 def _handle_text(client, channel: str, ts: str, text: str) -> None:
@@ -162,7 +205,7 @@ def _handle_text(client, channel: str, ts: str, text: str) -> None:
     # 1. Direct PDF link -> download it (DOI is extracted from the file).
     if url and url.lower().endswith(".pdf"):
         try:
-            _run_and_reply(client, channel, ts, download_url(url))
+            _run_and_reply(client, channel, ts, download_url(url), prompt_text=text)
         except Exception as e:
             slack_post.send(
                 client, channel,
@@ -203,7 +246,7 @@ def _handle_text(client, channel: str, ts: str, text: str) -> None:
         if not pdf_url:
             continue
         try:
-            _run_and_reply(client, channel, ts, download_url(pdf_url), doi=doi)
+            _run_and_reply(client, channel, ts, download_url(pdf_url), doi=doi, prompt_text=text)
             return
         except Exception:
             continue

@@ -53,12 +53,14 @@ def _parse(stdout: str, valid_topics: set[str]) -> tuple[str, list[str]]:
     return "\n".join(bullets), topics[:3]
 
 
-def run_node(fulltext: str, valid_topics: set[str]) -> NodeResult:
+def run_node(fulltext: str, valid_topics: set[str], focus_hint: str = "") -> NodeResult:
     ncfg = CONFIG["node"]
+    focus_line = f"Additional focus from the user: {focus_hint}\n\n" if focus_hint else ""
     prompt = (
         f"/{ncfg['skill']}\n\n"
         "Extract from the following paper. Output ONLY the KEYPOINTS bullets and "
         "the TOPICS line, nothing else.\n\n"
+        f"{focus_line}"
         "<paper>\n" + fulltext[:_MAX_CHARS] + "\n</paper>\n"
     )
     cmd = [ncfg["claude_bin"], "-p", "--model", ncfg["model"]]

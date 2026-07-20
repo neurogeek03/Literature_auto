@@ -18,6 +18,7 @@ _MODEL = None
 
 _TITLE_RE = re.compile(r"\*\*Title\*\*::\s*(.+)")
 _ABSTRACT_RE = re.compile(r"\[!Abstract\][^\n]*\n>\s?(.+)")
+_NODE_RE = re.compile(r"%% node:start %%\n(.+?)%% node:end %%", re.DOTALL)
 
 
 def _model():
@@ -42,7 +43,8 @@ def embed(texts: list[str]) -> np.ndarray:
 
 
 def extract_embed_text(md: str) -> str:
-    """Title + abstract from one of our literature notes (the semantic gist)."""
+    """Title + abstract from one of our literature notes (the semantic gist).
+    Poster/slide notes have no abstract; fall back to the Key Points bullets."""
     title = ""
     mt = _TITLE_RE.search(md)
     if mt:
@@ -51,6 +53,10 @@ def extract_embed_text(md: str) -> str:
     ma = _ABSTRACT_RE.search(md)
     if ma:
         abstract = ma.group(1).strip()
+    if not abstract:
+        mn = _NODE_RE.search(md)
+        if mn:
+            abstract = re.sub(r"\s+", " ", mn.group(1)).strip()
     text = (title + "\n" + abstract).strip()
     return text or title
 

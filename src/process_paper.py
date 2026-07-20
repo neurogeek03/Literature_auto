@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import codelinks, fulltext, metadata, note_render
+from . import codelinks, conference, fulltext, metadata, note_render
 from .config import CONFIG, valid_topics
 from .metadata import PaperMeta
 from .node import NodeResult, run_node
@@ -33,6 +33,7 @@ class Result:
     code: list[str] = field(default_factory=list)
     word_count: int = 0
     node_error: str = ""
+    conference: str = ""
 
 
 def _related_query(meta: PaperMeta, fulltext_md: str) -> str:
@@ -51,17 +52,24 @@ def _insufficient_message(reason: str, title: str, wc: int) -> str:
             "words. Send me the full-text PDF and I'll do the rest.")
 
 
-def process_pdf(pdf_path: str | Path, doi: str = "") -> Result:
+def process_pdf(pdf_path: str | Path, doi: str = "", prompt_text: str = "") -> Result:
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         return Result(status="error", message=f"PDF not found: {pdf_path}")
+
+    conf_slug, focus_hint = conference.parse_prompt(prompt_text)
+    if conf_slug:
+        conference.ensure_stub(conf_slug)
 
     # 1. DOI + metadata
     try:
         head_text = fulltext.first_pages_text(pdf_path, n=2)
     except Exception as e:
         return Result(status="error", message=f"could not open PDF: {e}")
-    meta = metadata.get_metadata(doi=doi, pdf_text=head_text)
+    try:
+        meta = metadata.get_metadata(doi=doi, pdf_text=head_text)
+    except Exception as e:
+        return Result(status="error", message=f"couldn't fetch metadata: {e}")
 
     # 2. Full text + sufficiency gate
     try:
@@ -80,22 +88,25 @@ def process_pdf(pdf_path: str | Path, doi: str = "") -> Result:
             message=_insufficient_message(reason, meta.title, wc),
         )
 
-    # 3. Code availability
-    code = codelinks.find_code_links(ft)
+    # 3-6. Code links, related notes, node, and note write. The node step is
+    # non-fatal by design (falls back to no bullets); everything else here
+    # must surface as a Result rather than an unhandled exception, or a
+    # permanent bug would silently retry forever under catchup.py.
+    try:
+        code = codelinks.find_code_links(ft)
 
-    # 4. Related notes (deterministic)
-    from . import related as related_mod  # lazy: loads fastembed model on demand
-    related_keys = related_mod.related(
-        _related_query(meta, ft), exclude_citekey=meta.citekey
-    )
+        from . import related as related_mod  # lazy: loads fastembed model on demand
+        related_keys = related_mod.related(
+            _related_query(meta, ft), exclude_citekey=meta.citekey
+        )
 
-    # 5. Node (Claude Code; non-fatal on failure)
-    node = run_node(ft, valid_topics())
-    if not node.ok and not node.bullets:
-        node = NodeResult(bullets="", topics=node.topics, error=node.error)
+        node = run_node(ft, valid_topics(), focus_hint=focus_hint)
+        if not node.ok and not node.bullets:
+            node = NodeResult(bullets="", topics=node.topics, error=node.error)
 
-    # 6. Write note
-    path = note_render.write_note(meta, ft, node, related_keys, code)
+        path = note_render.write_note(meta, ft, node, related_keys, code, conference=conf_slug)
+    except Exception as e:
+        return Result(status="error", message=f"failed while building the note: {e}", meta=meta)
 
     return Result(
         status="ok",
@@ -107,6 +118,7 @@ def process_pdf(pdf_path: str | Path, doi: str = "") -> Result:
         code=code,
         word_count=wc,
         node_error=node.error,
+        conference=conf_slug,
     )
 
 
@@ -114,9 +126,10 @@ def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Process one paper PDF -> Obsidian note.")
     ap.add_argument("pdf")
     ap.add_argument("--doi", default="")
+    ap.add_argument("--prompt", default="", help="caption text (conference tag + focus hint)")
     args = ap.parse_args(argv)
 
-    r = process_pdf(args.pdf, doi=args.doi)
+    r = process_pdf(args.pdf, doi=args.doi, prompt_text=args.prompt)
     print(f"status: {r.status}")
     if r.meta:
         print(f"title:  {r.meta.title}")

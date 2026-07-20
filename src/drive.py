@@ -37,13 +37,15 @@ def _service():
     return build("drive", "v3", credentials=creds)
 
 
-def stage_pdf(pdf_path: str | Path) -> str:
-    """Upload the PDF to the configured folder; return the Drive file link."""
+def stage_pdf(pdf_path: str | Path, filename: str = "") -> str:
+    """Upload the PDF to the configured folder; return the Drive file link.
+    `filename` overrides the uploaded name (e.g. a structured Author_Year_topic
+    convention) — the local file on disk is untouched either way."""
     from googleapiclient.http import MediaFileUpload
 
     folder_id = (CONFIG.get("drive") or {}).get("folder_id") or ""
     svc = _service()
-    meta = {"name": Path(pdf_path).name}
+    meta = {"name": filename or Path(pdf_path).name}
     if folder_id:
         meta["parents"] = [folder_id]
     media = MediaFileUpload(str(pdf_path), mimetype="application/pdf")

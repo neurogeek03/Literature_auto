@@ -4,6 +4,7 @@ vault:
   path: /Users/marlenfaf/Desktop/UofT_PhD/literature_auto
   notes_subdir: ""          # "" = notes at vault root; or e.g. "papers"
   topics_subdir: topics     # topic hub stubs live here
+  images_subdir: images     # poster/slide images embedded in notes live here
 
 slack:
   channel_id: ""            # private channel ID (Cxxxxxxxx), filled after app setup
@@ -21,6 +22,7 @@ node:
   claude_bin: /opt/homebrew/bin/claude   # absolute path (launchd has a minimal PATH)
   model: claude-sonnet-4-6
   skill: paper-node
+  poster_skill: poster-node   # vision variant, used for image (poster/slide) drops
   timeout_seconds: 180
 
 metadata:
@@ -30,6 +32,19 @@ metadata:
 drive:
   enabled: false
   folder_id: ""             # NotebookLM staging folder (opt-in)
+
+# Conference whitelist for the caption-parsing tag (see IMPROVEMENTS.md #4).
+# Add new entries manually; the pipeline never invents a slug that isn't here,
+# but it does auto-create the vault sub-topic stub on first use of a known one.
+conferences:
+  - slug: ISMB_2026
+    aliases: ["ISMB 26", "ISMB26", "ISMB 2026", "ISMB-26"]
+  - slug: NeurIPS_2025
+    aliases: ["NeurIPS 25", "neurips2025", "NeurIPS 2025"]
+  - slug: RECOMB_2026
+    aliases: ["RECOMB 26", "RECOMB 2026"]
+  - slug: CAN_2026
+    aliases: ["CAN 26", "CAN26", "CAN 2026", "CAN-26", "CAN-2026"]
 
 paths:
   work_dir: .cache/work     # transient downloaded PDFs
