@@ -125,7 +125,8 @@ def _stage_notebooklm(pdf_path: Path, result) -> str | None:
         drive.stage_pdf(pdf_path, filename=_structured_filename(result))
         return slack_post.NOTEBOOKLM_URL
     except Exception:
-        return None
+        logging.exception("NotebookLM Drive staging failed for %s", pdf_path)
+        return "STAGING_FAILED"
 
 
 # ----- the shared handler -----

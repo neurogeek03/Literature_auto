@@ -37,7 +37,9 @@ def format_result(result: Result, notebooklm_link: str | None = None) -> str:
     if result.node_error:
         lines.append(f"_(node skipped: {result.node_error})_")
     lines.append(f"Note: <{_obsidian_uri(result.note_path)}|open in Obsidian>")
-    if notebooklm_link:
+    if notebooklm_link == "STAGING_FAILED":
+        lines.append("_(NotebookLM staging failed — check .cache/listener.err.log)_")
+    elif notebooklm_link:
         lines.append(f"Podcast: <{notebooklm_link}|stage in NotebookLM>")
     return "\n".join(lines)
 
