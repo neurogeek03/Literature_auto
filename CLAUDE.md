@@ -61,9 +61,14 @@ forever.
 - Notes are named `@<citekey>.md`; citekey = `Author_Year` (pandoc convention),
   generated from metadata — no Better BibTeX.
 - Link convention: `[[@Author_Year]]` between literature notes (the graph).
-- Topic stubs at `literature_auto/topics/<name>.md` (two-tier hierarchy); papers
-  link to 1–3 topics in the Connections block. Topic assignment is part of the
-  `paper-node` call. Full vocabulary and examples in `PLAN.md` § Knowledge graph.
+- Topic stubs at `<vault>/topics/<name>.md` (two-tier hierarchy); papers link to
+  1–3 topics in the Connections block. Topic assignment is part of the
+  `paper-node` call. **The taxonomy is user-defined and lives in `config.yaml` →
+  `topics:` (single source of truth).** `scripts/setup_topics.py` materializes it
+  into the topic stubs, the `<!-- TOPICS:auto -->` region of both skills, and the
+  graph colors (one hue per family, shades for children). `valid_topics()` still
+  validates against the vault stub filenames at runtime. See `PLAN.md` § Knowledge
+  graph.
 
 ## Per-paper flow
 

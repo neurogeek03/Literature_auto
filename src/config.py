@@ -69,3 +69,45 @@ def valid_topics() -> set[str]:
     if not td.exists():
         return set()
     return {f.stem for f in td.glob("*.md")}
+
+
+def topics_taxonomy() -> dict[str, list[dict]]:
+    """The user's two-tier theme taxonomy from config: family -> [child, ...].
+
+    Each family key maps to a list of child leaves ({"slug", "desc"}). A family
+    with an empty list is itself the single assignable leaf. Single source of
+    truth for topic stubs, skill vocabulary, and graph colors; materialized by
+    scripts/setup_topics.py. Empty dict if `topics:` is unset.
+    """
+    raw = CONFIG.get("topics") or {}
+    taxonomy: dict[str, list[dict]] = {}
+    for family, children in raw.items():
+        norm: list[dict] = []
+        for child in children or []:
+            if isinstance(child, str):
+                norm.append({"slug": child, "desc": ""})
+            elif isinstance(child, dict) and child.get("slug"):
+                norm.append({"slug": str(child["slug"]), "desc": str(child.get("desc") or "")})
+        taxonomy[str(family)] = norm
+    return taxonomy
+
+
+def topic_leaves() -> list[dict]:
+    """Flatten the taxonomy to assignable leaves ({"slug", "desc"}).
+
+    Rule: every child slug is a leaf; a childless family is itself a leaf. This
+    is the exact set the model is told to choose from (skill vocabulary).
+    """
+    leaves: list[dict] = []
+    seen: set[str] = set()
+    for family, children in topics_taxonomy().items():
+        if children:
+            for child in children:
+                if child["slug"] not in seen:
+                    seen.add(child["slug"])
+                    leaves.append(child)
+        else:
+            if family not in seen:
+                seen.add(family)
+                leaves.append({"slug": family, "desc": ""})
+    return leaves

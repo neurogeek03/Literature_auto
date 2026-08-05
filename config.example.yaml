@@ -1,10 +1,23 @@
 # Copy to config.yaml and adjust. config.yaml is gitignored.
 
 vault:
-  path: /Users/marlenfaf/Desktop/UofT_PhD/literature_auto
+  path: /ABSOLUTE/PATH/TO/YOUR/obsidian-vault   # create your own Obsidian vault, then put its absolute path here
   notes_subdir: ""          # "" = notes at vault root; or e.g. "papers"
   topics_subdir: topics     # topic hub stubs live here
   images_subdir: images     # poster/slide images embedded in notes live here
+
+# Your themes. Single source of truth for topic stubs, the skill vocabulary the
+# model picks from, and the graph colors (one color per top-level theme, shades
+# for its sub-themes). Don't hand-craft this — run `python scripts/setup_topics.py`,
+# which prompts you for your own themes and fills this in. Re-run anytime to add
+# more. The example below is just a placeholder to replace.
+# === topics (managed by scripts/setup_topics.py — run that, or edit here + re-run) ===
+topics:
+  methods:
+    - {slug: pipelines, desc: "workflows, tooling, automation"}
+    - {slug: models, desc: "modeling and ML methods"}
+  reviews: []
+# === end topics ===
 
 slack:
   channel_id: ""            # private channel ID (Cxxxxxxxx), filled after app setup
@@ -26,8 +39,8 @@ node:
   timeout_seconds: 180
 
 metadata:
-  crossref_mailto: marlenfafouti@gmail.com   # Crossref polite pool
-  unpaywall_email: marlenfafouti@gmail.com   # Unpaywall OA lookup
+  crossref_mailto: you@example.com   # your email — Crossref polite pool
+  unpaywall_email: you@example.com   # your email — Unpaywall OA lookup
 
 drive:
   enabled: false

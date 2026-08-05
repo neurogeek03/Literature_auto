@@ -60,6 +60,12 @@ around them and cross-topic papers sitting visually between hubs.
 
 ### Vocabulary (two-tier)
 
+The taxonomy is **user-defined**: it lives in `config.yaml` → `topics:` (single
+source of truth) and is materialized into the topic stubs, the skill vocabulary,
+and the graph colors by `scripts/setup_topics.py` (`--add` to extend it). The
+table below is the author's own example taxonomy — a new user runs
+`setup_topics.py` and gets their own instead.
+
 | Tier 1 | Tier 2 subcategories |
 |---|---|
 | `neuroscience` | `general-neuroscience`; brain-region nodes (future) |
