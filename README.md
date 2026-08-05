@@ -113,6 +113,32 @@ Set `drive.enabled: true` + `drive.folder_id` in `config.yaml`, add a Google
 the Slack reply then includes a link to stage the PDF for a NotebookLM notebook.
 NotebookLM has no API — you still click *Generate* yourself.
 
+## Browser-fetch fallback — Chrome settings (Claude-in-Chrome)
+
+*For the in-progress browser-fetch feature (see `IMPROVEMENTS.md` #7): when a
+shared link/DOI is bot-blocked (bioRxiv, Elsevier, paywalled publishers) and the
+deterministic strategies fail, the pipeline drives your real logged-in Chrome via
+Claude-in-Chrome to fetch the PDF.* For that to run **unattended**, Chrome must
+save PDFs to disk with **no dialogs**. Two settings are required — both matter:
+
+1. **Ask where to save each file before downloading → OFF.**
+   `chrome://settings/downloads` — otherwise a native macOS "Save As" Finder sheet
+   opens on every download. That sheet is an OS-level dialog *outside* the web
+   page, so Claude-in-Chrome cannot see or confirm it and the download hangs
+   forever.
+2. **PDF documents → Download PDFs** (not "Open PDFs in Chrome").
+   `chrome://settings/content/pdfDocuments` (Settings → Privacy and security →
+   Site settings → Additional content settings → PDF documents). Without this a
+   PDF link just *opens* in Chrome's inline viewer; its viewer download (↓) button
+   is a "Save As" that **always** shows the Finder sheet regardless of setting #1.
+   Selecting "Download PDFs" makes a PDF link a true *download*, which respects
+   setting #1 and saves silently.
+
+With both set, navigating to a `.full.pdf` URL writes straight to **`~/Downloads`**
+(Claude-in-Chrome is scoped to that folder) with zero prompts — validated live on
+bioRxiv `10.64898/2026.07.30.741795v1`. The pipeline will look in `~/Downloads`
+for the fetched file and move it into the work dir.
+
 ## The `paper-node` skill
 
 The AI summary node comes from a Claude Code **skill** that must live in your home
