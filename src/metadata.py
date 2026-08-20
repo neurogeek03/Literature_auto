@@ -34,19 +34,46 @@ class PaperMeta:
     is_preprint: bool = False
 
 
-def find_doi(text: str) -> str:
-    """First DOI-looking token in text, cleaned of trailing junk."""
-    if not text:
-        return ""
-    m = DOI_RE.search(text)
-    if not m:
-        return ""
-    doi = m.group(0)
+# Explicit "DOI: 10.xxx" label — marks the article's *own* DOI in end-matter,
+# as opposed to the bare/"doi.org/" DOIs of cited references.
+DOI_LABEL_RE = re.compile(r"(?i)\bdoi:\s*(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)")
+
+
+def _clean_doi(doi: str) -> str:
     # Strip common trailing artifacts from PDF text extraction.
     doi = doi.rstrip(").,;")
     # Drop an accidental trailing 'pdf' glued on by some extractors.
     doi = re.sub(r"(?i)pdf$", "", doi).rstrip(").,;")
     return doi
+
+
+def find_doi(text: str) -> str:
+    """The article's *own* DOI, not the first DOI-looking token.
+
+    Journals like Science/Sci. Transl. Med./Sci. Adv. print the article DOI only
+    in the end-matter, *after* the reference list — so the first DOI in the text
+    is usually a cited reference's DOI. We instead score every DOI by how often
+    it occurs (the article's own repeats in page footers / citation block) with a
+    strong bonus for any appearance next to an explicit "DOI:" label, and break
+    ties by earliest position (page-1 DOI wins for normal journals).
+    """
+    if not text:
+        return ""
+    score: dict[str, int] = {}
+    first_pos: dict[str, int] = {}
+    for m in DOI_RE.finditer(text):
+        doi = _clean_doi(m.group(0))
+        if not doi:
+            continue
+        score[doi] = score.get(doi, 0) + 1
+        first_pos.setdefault(doi, m.start())
+    if not score:
+        return ""
+    for m in DOI_LABEL_RE.finditer(text):
+        doi = _clean_doi(m.group(1))
+        if doi in score:
+            score[doi] += 5
+    return max(score, key=lambda d: (score[d], -first_pos[d]))
 
 
 def _strip_tags(s: str) -> str:
@@ -205,10 +232,15 @@ def make_citekey(meta: PaperMeta) -> str:
     return f"{last}_{year}"
 
 
-def get_metadata(doi: str = "", pdf_text: str = "") -> PaperMeta:
+def get_metadata(doi: str = "", pdf_text: str = "", doi_text: str | None = None) -> PaperMeta:
     """Resolve metadata. Prefers Crossref, backfills from OpenAlex, falls back
-    to a title guessed from the PDF text when no DOI is available."""
-    doi = doi or find_doi(pdf_text)
+    to a title guessed from the PDF text when no DOI is available.
+
+    ``pdf_text`` (the first pages) drives the title fallback; ``doi_text`` is the
+    text searched for a DOI — pass the *full* document so a DOI that only appears
+    in the end-matter (Science journals) is found. Defaults to ``pdf_text``.
+    """
+    doi = doi or find_doi(doi_text if doi_text is not None else pdf_text)
 
     meta: PaperMeta | None = None
     if doi:

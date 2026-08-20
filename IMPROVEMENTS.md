@@ -123,3 +123,108 @@ points at one vault. Needs a channel→vault (and channel→topic-vocabulary?) m
 watched channel routes to its own vault + index + config.
 
 **Status:** Noted, deferred. User will spec the details later.
+
+---
+
+## 9. Multiple papers/links in a single Slack drop
+
+Recorded 2026-08-06.
+
+**Idea:** The user can share several papers at once and have all of them processed.
+Currently sharing 3 links in one message failed to process them all.
+
+**Root cause (confirmed by reading the code):** the failure is specific to **multiple
+links/DOIs in one message**. `slack_listener.handle_event()` already loops over multiple
+PDF *attachments* (`for f in pdfs: ...`), but the text path is single-shot:
+`_handle_text()` calls `_first_url(text)` (first URL only) and `metadata.find_doi()` (first
+DOI only), so only the first of N links/DOIs in a message is ever handled. The other two
+were silently dropped.
+
+**Scope:**
+- Parse **all** URLs and DOIs in the message text, not just the first (`_all_urls()` +
+  find-all-DOIs), dedup them (a message may contain both a URL and its bare DOI, or repeat a
+  link), then loop `_handle_text` logic per item — mirroring the existing `pdfs` loop.
+- **Mixed drops:** `handle_event()` currently branches `if pdfs / elif images / else text`,
+  so text links are ignored whenever a PDF is *also* attached. Decide whether one message
+  with both an attached PDF and extra links should process everything.
+- One threaded Slack reply **per paper** (matches the current per-PDF behaviour), not one
+  combined card.
+- Sequential vs parallel: process items sequentially to stay gentle on Slack rate limits and
+  serialize the headless `claude -p` node calls (each spins up a subprocess); N papers in
+  parallel could thrash. Sequential per message is the safe default.
+
+**Idempotency gotcha to handle:** the message gets ONE reaction + `save_last_ts` only after
+the whole loop. If item 2 of 3 fails, the message is left for `catchup.py`, which will
+**re-run all three** on retry. Papers already dedup by DOI in `note_render.target_path()`
+so re-processing is mostly safe (updates in place), but confirm no duplicate notes/Slack
+replies result — or track per-item completion so a retry only redoes the failed one.
+
+**Open questions:**
+- Parallel or strictly sequential within a message? (leaning sequential)
+- Partial-failure semantics: whole-message retry (simple, relies on per-paper dedup) vs
+  per-item state (more code, cleaner)?
+- Should a mixed PDF-plus-links message process both, or is that an edge case not worth it?
+
+**Status:** Proposed. Root cause confirmed (`_handle_text` first-URL/first-DOI only). Not
+yet implemented.
+
+---
+
+## 10. Better full-text formatting in the note (OpenDataLoader) + layout fix
+
+Recorded 2026-08-06.
+
+**Idea:** The full text saved in the Obsidian note is currently hard to read. Two
+independent causes, both to be fixed:
+1. **Converter quality.** `fulltext.to_markdown()` is raw `pymupdf4llm`, which produces
+   broken line-wrapping, hyphenation artifacts, repeated running headers/footers, and
+   mangled tables. Switch to **OpenDataLoader** (`opendataloader-pdf`), which the user finds
+   best — it benchmarks #1 for accuracy with proper reading order and table extraction.
+2. **Embedding/layout.** The converted markdown is dropped verbatim inside a `<details>`
+   raw-HTML block in `templates/note_layout.md`. Obsidian renders markdown *inside* raw HTML
+   inconsistently, which compounds the unreadability. Fix the presentation too (user chose
+   "fix both").
+
+**Converter swap — decisions locked in:**
+- Package: `opendataloader-pdf` (PyPI, `pip install -U opendataloader-pdf`). Python API is a
+  thin wrapper over a Java core: `opendataloader_pdf.convert(input, output_dir,
+  format="markdown")`. It's **file-output oriented** — likely writes a `.md` we then read
+  back; confirm whether an in-memory string API exists, else convert to a temp dir and read.
+- **Local deterministic mode ONLY.** OpenDataLoader also has an AI "hybrid" mode (LLM chart
+  descriptions, etc.) — do NOT enable it. Pin whatever flag disables all AI/LLM features so
+  full-text conversion stays deterministic (same input -> same output), preserving the
+  "deterministic everywhere except the node" hard rule.
+- **Java runtime bundled INTO the repo's uv env**, not a system install (user requirement).
+  The launchd daemon runs with a minimal PATH and calls `.venv/bin/python` by absolute path,
+  so a system `java` may not be on PATH. Vendor a JRE via a Python-packaged JDK dependency
+  (e.g. `jdk4py` or `install-jdk`) added to `pyproject.toml`, and set `JAVA_HOME` to it
+  before calling `convert()` — so `uv sync` alone provisions everything and no separate Java
+  install is needed. **Open: confirm the exact JRE-in-uv mechanism** (whether the ODL wheel
+  bundles a JRE, or we pin one).
+- **Keep the API surface stable.** `to_markdown()` should keep its signature so downstream
+  (`word_count`, sufficiency gate, related-embedding, node input) is unchanged — only the
+  engine swaps.
+- **DOI detection stays on `fitz`.** `first_pages_text()` (cheap, pure-Python, no JVM) can
+  keep extracting the first 2 pages for DOI detection; only the full conversion goes to ODL.
+- **OCR side effect on the sufficiency gate.** ODL does OCR on scanned PDFs, so PDFs that
+  previously failed the `SCANNED` gate may now extract real text. Revisit the gate thresholds
+  once ODL is in — this could reduce false "send a text PDF" replies.
+
+**Layout fix (template + `note_render`):**
+- Replace the `<details><summary>` raw-HTML block with an Obsidian-native **collapsible
+  callout** (e.g. `> [!note]- Full text` — the trailing `-` starts it collapsed), which
+  renders markdown properly *and* folds. Verify against how the rest of the template uses
+  callouts (`[!Connections]`, `[!Abstract]`, `[!md]`).
+- Optional cleanup pass: normalise heading levels, strip repeated running headers/footers,
+  collapse runs of blank lines. ODL's better reading order should make most of this
+  unnecessary.
+
+**Open questions:**
+- Exact JRE-in-uv provisioning mechanism (bundled wheel vs pinned `jdk4py`/`install-jdk`)?
+- Does `opendataloader_pdf.convert()` offer an in-memory return, or must we read back a
+  written file?
+- After ODL's OCR, what should the new sufficiency-gate thresholds be?
+- Collapsible callout vs a different foldable presentation for a multi-page full-text block?
+
+**Status:** Proposed. ODL confirmed (`opendataloader-pdf`, local deterministic mode,
+Java-in-uv). Not yet implemented.

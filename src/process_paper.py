@@ -61,21 +61,25 @@ def process_pdf(pdf_path: str | Path, doi: str = "", prompt_text: str = "") -> R
     if conf_slug:
         conference.ensure_stub(conf_slug)
 
-    # 1. DOI + metadata
-    try:
-        head_text = fulltext.first_pages_text(pdf_path, n=2)
-    except Exception as e:
-        return Result(status="error", message=f"could not open PDF: {e}")
-    try:
-        meta = metadata.get_metadata(doi=doi, pdf_text=head_text)
-    except Exception as e:
-        return Result(status="error", message=f"couldn't fetch metadata: {e}")
-
-    # 2. Full text + sufficiency gate
+    # 1. Full text first — DOI discovery must see the whole document, since
+    #    Science journals print the article's own DOI only in the end-matter.
     try:
         ft = fulltext.to_markdown(pdf_path)
     except Exception as e:
-        return Result(status="error", message=f"PDF->Markdown failed: {e}", meta=meta)
+        return Result(status="error", message=f"PDF->Markdown failed: {e}")
+
+    # 2. DOI + metadata. Title fallback uses the first pages; DOI search uses
+    #    the full text.
+    try:
+        head_text = fulltext.first_pages_text(pdf_path, n=2)
+    except Exception:
+        head_text = ft[:4000]
+    try:
+        meta = metadata.get_metadata(doi=doi, pdf_text=head_text, doi_text=ft)
+    except Exception as e:
+        return Result(status="error", message=f"couldn't fetch metadata: {e}")
+
+    # 3. Sufficiency gate
     wc = fulltext.word_count(ft)
     min_words = int(CONFIG["fulltext"]["min_words"])
     if wc < min_words:

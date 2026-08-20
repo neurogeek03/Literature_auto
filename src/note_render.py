@@ -18,6 +18,16 @@ def _one_line(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
+def _authors_line(authors: list[str], cap: int = 12) -> str:
+    """Join authors, but collapse big consortium bylines (Science papers often
+    carry 100+ Crossref author records) so the Metadata line stays readable."""
+    if not authors:
+        return ""
+    if len(authors) <= cap:
+        return "; ".join(authors)
+    return "; ".join(authors[:cap]) + f"; et al. ({len(authors)} authors)"
+
+
 def render(
     meta: PaperMeta,
     fulltext_md: str,
@@ -57,7 +67,7 @@ def render(
         "CODE_SECTION": code_section,
         "NODE": node_md,
         "ABSTRACT": _one_line(meta.abstract) or "(no abstract available)",
-        "AUTHORS": "; ".join(meta.authors),
+        "AUTHORS": _authors_line(meta.authors),
         "VENUE": _one_line(meta.venue),
         "FULLTEXT": fulltext_md.strip(),
         "PUB_TYPE": pub_type,
