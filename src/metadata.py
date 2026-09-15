@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 import requests
@@ -15,6 +16,25 @@ from .config import CONFIG
 # DOIs: 10.<registrant>/<suffix>. Trailing punctuation trimmed after match.
 DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
+
+# arXiv IDs. Modern scheme is YYMM.NNNNN (4-5 digit sequence), optional version
+# (v1, v2, ...). Old scheme is <archive>[.<subclass>]/YYMMNNN. arXiv preprints
+# print NO DOI of their own in the body, so relying on find_doi() would grab a
+# *cited reference's* DOI — we detect the arXiv ID and resolve it directly.
+ARXIV_MODERN = r"\d{4}\.\d{4,5}(?:v\d+)?"
+ARXIV_OLD = r"(?:[a-z-]+(?:\.[A-Z]{2})?)/\d{7}(?:v\d+)?"
+# In free text, require an explicit "arXiv:" context token so a random dotted
+# number (or a cited-ref DOI) is never misread as an arXiv ID.
+ARXIV_TEXT_RE = re.compile(
+    rf"(?i)arxiv[:\s]*({ARXIV_MODERN}|{ARXIV_OLD})"
+)
+# arxiv.org/abs|pdf/<id> URLs are unambiguous on their own.
+ARXIV_URL_RE = re.compile(
+    rf"(?i)arxiv\.org/(?:abs|pdf)/({ARXIV_MODERN}|{ARXIV_OLD})"
+)
+# A bare id used only for source_hint (filename stem / caption), where the
+# presence of an arXiv-shaped token is a strong enough signal on its own.
+ARXIV_BARE_RE = re.compile(rf"(?<!\d)({ARXIV_MODERN})(?!\d)")
 
 
 PREPRINT_VENUES = {"biorxiv", "medrxiv", "arxiv", "chemrxiv", "ssrn", "researchsquare"}
@@ -32,6 +52,9 @@ class PaperMeta:
     oa_pdf_url: str = ""
     citekey: str = ""
     is_preprint: bool = False
+    # Set by fetch_arxiv when the arXiv record links a published journal DOI, so
+    # get_metadata can prefer the richer Crossref/OpenAlex record.
+    journal_doi: str = ""
 
 
 # Explicit "DOI: 10.xxx" label — marks the article's *own* DOI in end-matter,
@@ -74,6 +97,168 @@ def find_doi(text: str) -> str:
         if doi in score:
             score[doi] += 5
     return max(score, key=lambda d: (score[d], -first_pos[d]))
+
+
+def _norm_arxiv_id(raw: str) -> str:
+    """Strip a trailing version suffix (v1, v2, ...) and lowercase old-scheme."""
+    raw = raw.strip()
+    raw = re.sub(r"(?i)v\d+$", "", raw)
+    return raw
+
+
+def find_arxiv_id(text: str = "", source_hint: str = "") -> str:
+    """The paper's arXiv ID, or '' if this isn't an arXiv preprint.
+
+    arXiv PDFs carry no DOI of their own in the body, so ``find_doi`` would pick
+    a cited reference's DOI. We look, in order, for:
+    1. an explicit ``arXiv:<id>`` token in the document text,
+    2. an ``arxiv.org/abs|pdf/<id>`` URL in the text,
+    3. an ``arxiv.org`` URL in ``source_hint`` (a shared link),
+    4. a bare arXiv-shaped id in ``source_hint`` (the download filename stem,
+       which browsers/Slack name after the id, e.g. ``2602.11632.pdf``).
+
+    The free-text match (1) requires the ``arXiv:`` context token and the
+    source_hint bare match (4) only runs on the hint, so a stray dotted number
+    or a cited-ref DOI in the body never registers as an arXiv ID.
+    """
+    if text:
+        m = ARXIV_TEXT_RE.search(text) or ARXIV_URL_RE.search(text)
+        if m:
+            return _norm_arxiv_id(m.group(1))
+    if source_hint:
+        m = ARXIV_URL_RE.search(source_hint) or ARXIV_TEXT_RE.search(source_hint)
+        if m:
+            return _norm_arxiv_id(m.group(1))
+        m = ARXIV_BARE_RE.search(source_hint)
+        if m:
+            return _norm_arxiv_id(m.group(1))
+    return ""
+
+
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+
+
+def _arxiv_ua() -> str:
+    return f"paper-pipeline/1.0 (mailto:{_mailto()})" if _mailto() else "paper-pipeline/1.0"
+
+
+def fetch_arxiv(arxiv_id: str) -> PaperMeta | None:
+    """Resolve arXiv metadata. Tries the export API (Atom XML) first, then falls
+    back to the abs-page citation meta tags (the export API is occasionally slow
+    or rate-limited). None only if both fail.
+    """
+    if not arxiv_id:
+        return None
+    return _fetch_arxiv_api(arxiv_id) or _fetch_arxiv_abs(arxiv_id)
+
+
+def _fetch_arxiv_api(arxiv_id: str) -> PaperMeta | None:
+    try:
+        r = requests.get(
+            "https://export.arxiv.org/api/query",
+            params={"id_list": arxiv_id, "max_results": 1},
+            headers={"User-Agent": _arxiv_ua()},
+            timeout=20,
+        )
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+    except Exception:
+        return None
+
+    entry = root.find(f"{_ATOM}entry")
+    if entry is None:
+        return None
+    # A bad/unknown id returns a placeholder entry with no title/published.
+    title = (entry.findtext(f"{_ATOM}title") or "").strip()
+    published = (entry.findtext(f"{_ATOM}published") or "").strip()
+    if not title or not published:
+        return None
+    title = re.sub(r"\s+", " ", title)
+
+    authors: list[str] = []
+    for a in entry.findall(f"{_ATOM}author"):
+        name = (a.findtext(f"{_ATOM}name") or "").strip()
+        if not name:
+            continue
+        # arXiv gives "First Last"; normalize to "Last, First".
+        parts = name.split()
+        if len(parts) >= 2:
+            authors.append(f"{parts[-1]}, {' '.join(parts[:-1])}")
+        else:
+            authors.append(name)
+
+    year = published[:4]
+    abstract = re.sub(r"\s+", " ", (entry.findtext(f"{_ATOM}summary") or "").strip())
+    journal_doi = _clean_doi((entry.findtext(f"{_ARXIV_NS}doi") or "").strip())
+
+    return PaperMeta(
+        title=title,
+        authors=authors,
+        year=year,
+        venue="arXiv",
+        abstract=abstract,
+        doi=f"10.48550/arXiv.{arxiv_id}",
+        url=f"https://arxiv.org/abs/{arxiv_id}",
+        oa_pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
+        is_preprint=True,
+        journal_doi=journal_doi,
+    )
+
+
+def _meta_tag(html: str, name: str) -> list[str]:
+    """All <meta name=... content=...> values for a citation tag (order-agnostic)."""
+    pat = re.compile(
+        rf'<meta[^>]+name=["\']{re.escape(name)}["\'][^>]*?content=["\']([^"\']*)["\']'
+        rf'|<meta[^>]+content=["\']([^"\']*)["\'][^>]*?name=["\']{re.escape(name)}["\']',
+        re.IGNORECASE,
+    )
+    out = []
+    for m in pat.finditer(html):
+        out.append(m.group(1) if m.group(1) is not None else m.group(2))
+    return out
+
+
+def _fetch_arxiv_abs(arxiv_id: str) -> PaperMeta | None:
+    """Fallback: parse Highwire citation_* meta tags from the abs page HTML."""
+    try:
+        r = requests.get(
+            f"https://arxiv.org/abs/{arxiv_id}",
+            headers={"User-Agent": _arxiv_ua()},
+            timeout=20,
+        )
+        r.raise_for_status()
+        html = r.text
+    except Exception:
+        return None
+
+    titles = _meta_tag(html, "citation_title")
+    if not titles:
+        return None
+    authors = _meta_tag(html, "citation_author")  # already "Last, First"
+    dates = _meta_tag(html, "citation_date") or _meta_tag(html, "citation_online_date")
+    year = ""
+    if dates:
+        m = re.search(r"\d{4}", dates[0])
+        year = m.group(0) if m else ""
+    abstract = ""
+    descs = _meta_tag(html, "citation_abstract") or _meta_tag(html, "og:description")
+    if descs:
+        abstract = re.sub(r"\s+", " ", descs[0]).strip()
+    journal_doi = _clean_doi((_meta_tag(html, "citation_doi") or [""])[0].strip())
+
+    return PaperMeta(
+        title=re.sub(r"\s+", " ", titles[0]).strip(),
+        authors=[a.strip() for a in authors if a.strip()],
+        year=year,
+        venue="arXiv",
+        abstract=abstract,
+        doi=f"10.48550/arXiv.{arxiv_id}",
+        url=f"https://arxiv.org/abs/{arxiv_id}",
+        oa_pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
+        is_preprint=True,
+        journal_doi=journal_doi,
+    )
 
 
 def _strip_tags(s: str) -> str:
@@ -232,38 +417,87 @@ def make_citekey(meta: PaperMeta) -> str:
     return f"{last}_{year}"
 
 
-def get_metadata(doi: str = "", pdf_text: str = "", doi_text: str | None = None) -> PaperMeta:
+def _resolve_by_doi(doi: str) -> PaperMeta | None:
+    """Crossref first, backfilled by OpenAlex, bioRxiv fallback, Unpaywall OA."""
+    meta = fetch_crossref(doi)
+    oa = fetch_openalex(doi)
+    if meta and oa:
+        # Backfill anything Crossref lacks (esp. abstract, OA pdf).
+        meta.abstract = meta.abstract or oa.abstract
+        meta.oa_pdf_url = oa.oa_pdf_url
+        meta.venue = meta.venue or oa.venue
+        if not meta.authors:
+            meta.authors = oa.authors
+        meta.is_preprint = meta.is_preprint or oa.is_preprint
+    elif oa and not meta:
+        meta = oa
+    # Preprints (biorxiv/medrxiv) are often absent from Crossref/OpenAlex.
+    if not meta:
+        meta = fetch_biorxiv(doi)
+    if meta and not meta.oa_pdf_url:
+        meta.oa_pdf_url = fetch_unpaywall_pdf(doi)
+    return meta
+
+
+def get_metadata(
+    doi: str = "",
+    pdf_text: str = "",
+    doi_text: str | None = None,
+    arxiv_id: str = "",
+    source_hint: str = "",
+) -> PaperMeta:
     """Resolve metadata. Prefers Crossref, backfills from OpenAlex, falls back
     to a title guessed from the PDF text when no DOI is available.
 
     ``pdf_text`` (the first pages) drives the title fallback; ``doi_text`` is the
     text searched for a DOI — pass the *full* document so a DOI that only appears
     in the end-matter (Science journals) is found. Defaults to ``pdf_text``.
+
+    Precedence: an explicit ``doi`` (user was deliberate) wins; else an arXiv ID
+    (``arxiv_id`` or one detected in the text / ``source_hint``) resolves against
+    the arXiv API — never via ``find_doi``, which would grab a cited reference's
+    DOI on a preprint; else the normal ``find_doi``/Crossref flow.
     """
-    doi = doi or find_doi(doi_text if doi_text is not None else pdf_text)
+    search_text = doi_text if doi_text is not None else pdf_text
 
     meta: PaperMeta | None = None
-    if doi:
-        meta = fetch_crossref(doi)
-        oa = fetch_openalex(doi)
-        if meta and oa:
-            # Backfill anything Crossref lacks (esp. abstract, OA pdf).
-            meta.abstract = meta.abstract or oa.abstract
-            meta.oa_pdf_url = oa.oa_pdf_url
-            meta.venue = meta.venue or oa.venue
-            if not meta.authors:
-                meta.authors = oa.authors
-            meta.is_preprint = meta.is_preprint or oa.is_preprint
-        elif oa and not meta:
-            meta = oa
-        # Preprints (biorxiv/medrxiv) are often absent from Crossref/OpenAlex.
-        if not meta:
-            meta = fetch_biorxiv(doi)
-        if meta and not meta.oa_pdf_url:
-            meta.oa_pdf_url = fetch_unpaywall_pdf(doi)
+
+    is_arxiv = False
+    if not doi:
+        arxiv_id = arxiv_id or find_arxiv_id(search_text, source_hint)
+        if arxiv_id:
+            is_arxiv = True
+            meta = fetch_arxiv(arxiv_id)
+            # If the preprint was published in a journal, prefer that richer
+            # record but keep the arXiv OA PDF and abs URL as fallbacks.
+            if meta and meta.journal_doi:
+                published = _resolve_by_doi(meta.journal_doi)
+                if published:
+                    published.oa_pdf_url = published.oa_pdf_url or meta.oa_pdf_url
+                    published.abstract = published.abstract or meta.abstract
+                    if not published.authors:
+                        published.authors = meta.authors
+                    meta = published
+
+    # Only fall back to text-scraped DOIs when this is NOT a known arXiv preprint
+    # — on a preprint the first DOI in the body is a cited reference's, which is
+    # exactly the bug this branch exists to avoid.
+    if meta is None and not is_arxiv:
+        doi = doi or find_doi(search_text)
+        if doi:
+            meta = _resolve_by_doi(doi)
 
     if meta is None:
-        meta = PaperMeta(doi=doi, url=f"https://doi.org/{doi}" if doi else "")
+        # For an arXiv preprint whose API lookup failed, keep the arXiv abs URL.
+        fallback_url = (
+            f"https://arxiv.org/abs/{arxiv_id}" if is_arxiv and arxiv_id
+            else (f"https://doi.org/{doi}" if doi else "")
+        )
+        meta = PaperMeta(
+            doi="" if is_arxiv else doi,
+            url=fallback_url,
+            is_preprint=is_arxiv,
+        )
         # Best-effort title from the first non-empty line of the PDF text.
         for line in (pdf_text or "").splitlines():
             line = line.strip()

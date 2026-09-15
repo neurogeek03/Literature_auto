@@ -52,7 +52,9 @@ def _insufficient_message(reason: str, title: str, wc: int) -> str:
             "words. Send me the full-text PDF and I'll do the rest.")
 
 
-def process_pdf(pdf_path: str | Path, doi: str = "", prompt_text: str = "") -> Result:
+def process_pdf(
+    pdf_path: str | Path, doi: str = "", prompt_text: str = "", arxiv_id: str = ""
+) -> Result:
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         return Result(status="error", message=f"PDF not found: {pdf_path}")
@@ -75,7 +77,13 @@ def process_pdf(pdf_path: str | Path, doi: str = "", prompt_text: str = "") -> R
     except Exception:
         head_text = ft[:4000]
     try:
-        meta = metadata.get_metadata(doi=doi, pdf_text=head_text, doi_text=ft)
+        meta = metadata.get_metadata(
+            doi=doi,
+            pdf_text=head_text,
+            doi_text=ft,
+            arxiv_id=arxiv_id,
+            source_hint=pdf_path.name,
+        )
     except Exception as e:
         return Result(status="error", message=f"couldn't fetch metadata: {e}")
 
@@ -130,10 +138,11 @@ def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Process one paper PDF -> Obsidian note.")
     ap.add_argument("pdf")
     ap.add_argument("--doi", default="")
+    ap.add_argument("--arxiv", default="", help="arXiv id (e.g. 2602.11632) to resolve authoritatively")
     ap.add_argument("--prompt", default="", help="caption text (conference tag + focus hint)")
     args = ap.parse_args(argv)
 
-    r = process_pdf(args.pdf, doi=args.doi, prompt_text=args.prompt)
+    r = process_pdf(args.pdf, doi=args.doi, prompt_text=args.prompt, arxiv_id=args.arxiv)
     print(f"status: {r.status}")
     if r.meta:
         print(f"title:  {r.meta.title}")

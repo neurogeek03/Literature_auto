@@ -188,9 +188,10 @@ def handle_event(client, event: dict) -> None:
 
 
 def _run_and_reply(
-    client, channel: str, ts: str, pdf: Path, doi: str = "", prompt_text: str = ""
+    client, channel: str, ts: str, pdf: Path,
+    doi: str = "", prompt_text: str = "", arxiv_id: str = "",
 ) -> None:
-    result = process_pdf(pdf, doi=doi, prompt_text=prompt_text)
+    result = process_pdf(pdf, doi=doi, prompt_text=prompt_text, arxiv_id=arxiv_id)
     nb = _stage_notebooklm(pdf, result) if result.status == "ok" else None
     slack_post.post_result(client, channel, result, thread_ts=ts, notebooklm_link=nb)
 
@@ -202,6 +203,27 @@ def _run_and_reply_poster(client, channel: str, ts: str, image: Path, prompt_tex
 
 def _handle_text(client, channel: str, ts: str, text: str) -> None:
     url = _first_url(text)
+
+    # 0. arXiv link -> resolve authoritatively via the arXiv API. arXiv preprints
+    #    carry no DOI of their own, so the generic landing-page/DOI path would
+    #    scrape a cited reference's DOI. Grab the id, download the arXiv PDF, and
+    #    hand the id to process_pdf so metadata comes from the arXiv record.
+    # Match only against the message text (which includes any URL) — never treat
+    # an arbitrary shared link as a filename hint, which would allow bare-number
+    # false positives.
+    arxiv_id = metadata.find_arxiv_id(text)
+    if arxiv_id:
+        try:
+            pdf = download_url(f"https://arxiv.org/pdf/{arxiv_id}")
+            _run_and_reply(client, channel, ts, pdf, arxiv_id=arxiv_id, prompt_text=text)
+        except Exception as e:
+            slack_post.send(
+                client, channel,
+                f"Couldn't download the arXiv PDF for `{arxiv_id}` (`{e}`) — "
+                "drop the file directly instead.",
+                thread_ts=ts,
+            )
+        return
 
     # 1. Direct PDF link -> download it (DOI is extracted from the file).
     if url and url.lower().endswith(".pdf"):
