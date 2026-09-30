@@ -36,6 +36,13 @@ ARXIV_URL_RE = re.compile(
 # presence of an arXiv-shaped token is a strong enough signal on its own.
 ARXIV_BARE_RE = re.compile(rf"(?<!\d)({ARXIV_MODERN})(?!\d)")
 
+# A real arXiv paper stamps its own id in the page-1 left margin, extracted near
+# the very start of the text; a *cited* arXiv id lives in the reference list at
+# the end. So we only trust a free-text "arXiv:" token in this leading window,
+# otherwise a non-arXiv paper that merely cites an arXiv preprint gets its
+# identity hijacked by the citation (the AlphaGenome-medRxiv-cites-GELU bug).
+ARXIV_HEAD_CHARS = 2500
+
 
 PREPRINT_VENUES = {"biorxiv", "medrxiv", "arxiv", "chemrxiv", "ssrn", "researchsquare"}
 
@@ -99,6 +106,41 @@ def find_doi(text: str) -> str:
     return max(score, key=lambda d: (score[d], -first_pos[d]))
 
 
+# medRxiv/bioRxiv stamp every page with "medRxiv preprint doi: https://doi.org/<DOI>"
+# — an unambiguous *self* identity a cited reference can never spoof. Matched on the
+# label, so it is prefix-agnostic (classic 10.1101 and newer prefixes like 10.64898).
+PREPRINT_DOI_LABEL_RE = re.compile(
+    r"(?i)\b(med|bio)rxiv\s+preprint\s+doi:\s*"
+    r"(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)"
+)
+
+
+def find_preprint_doi(text: str) -> tuple[str, str]:
+    """A medRxiv/bioRxiv preprint's OWN DOI, read from the page running-header
+    stamp printed on every page. Returns ``(doi, server)`` where server is
+    "medrxiv"/"biorxiv", or ``("", "")`` if no such stamp is present.
+
+    Unlike ``find_doi``, this cannot be fooled by a cited reference: only the
+    server's own page banner carries this exact label. Returns the most frequent
+    stamped DOI (robust against a stray one-off), tie-broken by the classic
+    running-header form.
+    """
+    if not text:
+        return "", ""
+    counts: dict[str, int] = {}
+    server_of: dict[str, str] = {}
+    for m in PREPRINT_DOI_LABEL_RE.finditer(text):
+        doi = _clean_doi(m.group(2))
+        if not doi:
+            continue
+        counts[doi] = counts.get(doi, 0) + 1
+        server_of.setdefault(doi, f"{m.group(1).lower()}rxiv")
+    if not counts:
+        return "", ""
+    best = max(counts, key=lambda d: counts[d])
+    return best, server_of[best]
+
+
 def _norm_arxiv_id(raw: str) -> str:
     """Strip a trailing version suffix (v1, v2, ...) and lowercase old-scheme."""
     raw = raw.strip()
@@ -117,12 +159,15 @@ def find_arxiv_id(text: str = "", source_hint: str = "") -> str:
     4. a bare arXiv-shaped id in ``source_hint`` (the download filename stem,
        which browsers/Slack name after the id, e.g. ``2602.11632.pdf``).
 
-    The free-text match (1) requires the ``arXiv:`` context token and the
-    source_hint bare match (4) only runs on the hint, so a stray dotted number
-    or a cited-ref DOI in the body never registers as an arXiv ID.
+    The free-text match (1) requires the ``arXiv:`` context token AND must fall
+    within the leading ``ARXIV_HEAD_CHARS`` (the page-1 margin stamp region), so a
+    cited arXiv reference in the bibliography of a non-arXiv paper is ignored. The
+    source_hint bare match (4) only runs on the hint, so a stray dotted number or a
+    cited-ref DOI in the body never registers as an arXiv ID.
     """
     if text:
-        m = ARXIV_TEXT_RE.search(text) or ARXIV_URL_RE.search(text)
+        head = text[:ARXIV_HEAD_CHARS]
+        m = ARXIV_TEXT_RE.search(head) or ARXIV_URL_RE.search(head)
         if m:
             return _norm_arxiv_id(m.group(1))
     if source_hint:
@@ -265,6 +310,26 @@ def _strip_tags(s: str) -> str:
     return re.sub(r"\s+", " ", TAG_RE.sub(" ", s or "")).strip()
 
 
+# Some deposits (e.g. medRxiv) inject role labels as fake author entries
+# ("Lead authors:", "Senior authors:", "Corresponding author:"). These corrupt
+# the first-author citekey, so drop them before building metadata.
+_AUTHOR_JUNK_RE = re.compile(
+    r"(?i)^(lead|senior|corresponding|contributing|co[- ]?)?\s*authors?\s*:?\s*$"
+)
+
+
+def _clean_authors(authors: list[str]) -> list[str]:
+    out: list[str] = []
+    for a in authors:
+        a = (a or "").strip().strip(",").strip()
+        if not a or a.endswith(":") or _AUTHOR_JUNK_RE.match(a):
+            continue
+        if not re.search(r"[A-Za-z]", a):  # no actual name characters
+            continue
+        out.append(a)
+    return out
+
+
 def _mailto() -> str:
     return (CONFIG.get("metadata") or {}).get("crossref_mailto", "")
 
@@ -297,14 +362,14 @@ def fetch_crossref(doi: str) -> PaperMeta | None:
             year = str(parts[0][0])
             break
 
-    title = " ".join(m.get("title") or []).strip()
+    title = _strip_tags(" ".join(m.get("title") or []))
     venue = " ".join(m.get("container-title") or []).strip()
     abstract = _strip_tags(m.get("abstract", ""))
 
     is_preprint = m.get("type") == "posted-content"
     return PaperMeta(
         title=title,
-        authors=authors,
+        authors=_clean_authors(authors),
         year=year,
         venue=venue,
         abstract=abstract,
@@ -343,8 +408,8 @@ def fetch_openalex(doi: str) -> PaperMeta | None:
 
     oa = w.get("best_oa_location") or w.get("primary_location") or {}
     return PaperMeta(
-        title=(w.get("title") or "").strip(),
-        authors=authors,
+        title=_strip_tags(w.get("title") or ""),
+        authors=_clean_authors(authors),
         year=str(w.get("publication_year") or ""),
         venue=((w.get("primary_location") or {}).get("source") or {}).get("display_name", "") or "",
         abstract=_openalex_abstract(w.get("abstract_inverted_index")),
@@ -368,11 +433,11 @@ def fetch_biorxiv(doi: str) -> PaperMeta | None:
                 continue
             d = items[0]
             raw_authors = d.get("authors", "")
-            authors = [a.strip() for a in raw_authors.split(";") if a.strip()]
+            authors = _clean_authors(raw_authors.split(";"))
             year = (d.get("date") or "")[:4]
             base_url = f"https://www.{server}.org/content/{doi}"
             return PaperMeta(
-                title=d.get("title", "").strip(),
+                title=_strip_tags(d.get("title", "")),
                 authors=authors,
                 year=year,
                 venue=d.get("server", "bioRxiv"),
@@ -453,14 +518,28 @@ def get_metadata(
     text searched for a DOI — pass the *full* document so a DOI that only appears
     in the end-matter (Science journals) is found. Defaults to ``pdf_text``.
 
-    Precedence: an explicit ``doi`` (user was deliberate) wins; else an arXiv ID
-    (``arxiv_id`` or one detected in the text / ``source_hint``) resolves against
-    the arXiv API — never via ``find_doi``, which would grab a cited reference's
-    DOI on a preprint; else the normal ``find_doi``/Crossref flow.
+    Precedence: an explicit ``doi`` (user was deliberate) wins; else a
+    medRxiv/bioRxiv self-DOI read from the page banner (authoritative — a cited
+    reference can't spoof it, and it wins over any arXiv reference the preprint
+    happens to cite); else an arXiv ID (``arxiv_id`` or one detected in the header
+    region / ``source_hint``) resolves against the arXiv API — never via
+    ``find_doi``, which would grab a cited reference's DOI on a preprint; else the
+    normal ``find_doi``/Crossref flow.
     """
     search_text = doi_text if doi_text is not None else pdf_text
 
     meta: PaperMeta | None = None
+
+    # A medRxiv/bioRxiv preprint's own banner DOI is authoritative and must be
+    # checked before arXiv detection: a preprint that cites an arXiv paper (e.g.
+    # AlphaGenome medRxiv citing GELU arXiv) would otherwise be hijacked by the
+    # cited arXiv id.
+    preprint_doi = ""
+    preprint_server = ""
+    if not doi:
+        preprint_doi, preprint_server = find_preprint_doi(search_text)
+        if preprint_doi:
+            doi = preprint_doi
 
     is_arxiv = False
     if not doi:
@@ -498,6 +577,15 @@ def get_metadata(
             url=fallback_url,
             is_preprint=is_arxiv,
         )
+        # A detected medRxiv/bioRxiv self-DOI that no registry resolved yet (e.g. a
+        # brand-new prefix): keep the correct identity rather than fall through to a
+        # wrong-paper guess. Venue from the banner, year from the DOI's date suffix.
+        if preprint_doi and not is_arxiv:
+            meta.is_preprint = True
+            meta.venue = "medRxiv" if preprint_server == "medrxiv" else "bioRxiv"
+            ym = re.search(r"/(\d{4})\.\d{2}\.\d{2}", preprint_doi)
+            if ym:
+                meta.year = ym.group(1)
         # Best-effort title from the first non-empty line of the PDF text.
         for line in (pdf_text or "").splitlines():
             line = line.strip()
