@@ -115,16 +115,65 @@ def build_index() -> dict:
     return index
 
 
-def related(query_text: str, exclude_citekey: str = "") -> list[str]:
-    """Top-k citekeys most similar to query_text, above min_similarity."""
+def find_similar_preprint(meta, query_text: str, min_sim: float = 0.95):
+    """A preprint note that is almost certainly the SAME paper as ``meta`` (a
+    published record) — the robust preprint->published match when the journal
+    retitled the paper and Crossref hasn't linked it yet.
+
+    Uses the cached embedding index: the preprint and published versions of one
+    paper share near-identical abstracts, so cosine runs ~0.99 vs ~0.6 for
+    unrelated work. Gated on a high threshold AND the same first-author last name
+    AND pub_type == preprint, so it never collapses two genuinely different
+    papers. Returns the note Path or None."""
+    from . import note_render  # lazy: avoids any import cycle
+
+    if not query_text or not getattr(meta, "authors", None):
+        return None
+    index = build_index()
+    entries = index.get("entries", {})
+    if not entries:
+        return None
+
+    qvec = embed([query_text])[0]
+    ranked = sorted(
+        ((ck, float(np.array(e["vector"], dtype=np.float32) @ qvec))
+         for ck, e in entries.items() if e.get("vector")),
+        key=lambda x: -x[1],
+    )
+    want_last = note_render._last_name(meta.authors[0])
+    for ck, sim in ranked:
+        if sim < min_sim:
+            break
+        p = notes_dir() / f"@{ck}.md"
+        if note_render._fm_pub_type(p) != "preprint":
+            continue
+        txt = p.read_text(errors="ignore")
+        ma = note_render._NOTE_AUTHORS_RE.search(txt)
+        note_last = note_render._last_name(ma.group(1).split(";")[0]) if ma else ""
+        if want_last and note_last and want_last == note_last:
+            return p
+    return None
+
+
+def related(
+    query_text: str,
+    exclude_citekey: str = "",
+    exclude_also: "set[str] | None" = None,
+) -> list[str]:
+    """Top-k citekeys most similar to query_text, above min_similarity.
+
+    ``exclude_also`` drops extra citekeys from the candidate set — e.g. a paper's
+    old preprint citekey during a preprint->published update, so the paper never
+    relates to itself under its former name."""
     top_k = int(CONFIG["related"]["top_k"])
     min_sim = float(CONFIG["related"]["min_similarity"])
+    excluded = {exclude_citekey} | (exclude_also or set())
     index = build_index()
     entries = index.get("entries", {})
 
     keys, mat = [], []
     for ck, e in entries.items():
-        if ck == exclude_citekey or not e.get("vector"):
+        if ck in excluded or not e.get("vector"):
             continue
         keys.append(ck)
         mat.append(e["vector"])

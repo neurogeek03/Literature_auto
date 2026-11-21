@@ -22,7 +22,11 @@ def format_result(result: Result, notebooklm_link: str | None = None) -> str:
 
     m = result.meta
     authors = "; ".join(m.authors[:4]) + (" et al." if len(m.authors) > 4 else "")
-    lines = [
+    lines = []
+    if result.updated_from:
+        # Preprint -> published: lead with what changed.
+        lines.append(f":arrows_counterclockwise: {result.message}")
+    lines += [
         f"*{m.title}*",
         f"_{authors}_  ·  {m.year}  ·  {m.venue}".strip(" ·"),
     ]

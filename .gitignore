@@ -1,11 +1,49 @@
-.venv/
-config.yaml
+# --- Secrets & credentials (NEVER commit) -------------------------------------
 .env
+.env.*
+!.env.example
 credentials.json
 token.json
+*.pem
+*.key
+
+# --- Local config (ships only as config.example.yaml) -------------------------
+config.yaml
+
+# --- Runtime state & caches ---------------------------------------------------
 state.json
 .cache/
+*.log
+
+# --- Pipeline inputs/outputs (downloaded papers, photos, vault) ---------------
+# Transient downloaded PDFs / phone photos the pipeline fetches:
+*.pdf
+*.jpg
+*.jpeg
+*.png
+# The Obsidian vault is the user's own, never part of the repo:
+vault/
+notes/
+
+# --- Python / uv --------------------------------------------------------------
+.venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# --- OS / editor cruft --------------------------------------------------------
 .DS_Store
-tests/
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# NOTE: tests/ are intentionally NOT ignored here so they ship with the repo.
+# If you keep committed demo images for the README, whitelist them explicitly, e.g.:
+#   !docs/demo.gif

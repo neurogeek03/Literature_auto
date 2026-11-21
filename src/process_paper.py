@@ -34,6 +34,7 @@ class Result:
     word_count: int = 0
     node_error: str = ""
     conference: str = ""
+    updated_from: str = ""            # old citekey when this re-dropped a now-published preprint
 
 
 def _related_query(meta: PaperMeta, fulltext_md: str) -> str:
@@ -50,6 +51,65 @@ def _insufficient_message(reason: str, title: str, wc: int) -> str:
                 "I can't read it. Send a text PDF.")
     return (f"That looks like just the abstract of {name} — I only pulled ~{wc} "
             "words. Send me the full-text PDF and I'll do the rest.")
+
+
+def _update_published_note(existing, meta, ft, wc, min_words, focus_hint, conf_slug) -> Result:
+    """Update an existing preprint note for its now-published version. Full
+    refresh (new node + full text) when the published full text is sufficient;
+    otherwise a metadata-only flip that keeps the preprint's content."""
+    old_ck = existing.stem.lstrip("@")
+    sufficient = wc >= min_words
+    try:
+        if sufficient:
+            code = codelinks.find_code_links(ft)
+            from . import related as related_mod  # lazy: loads fastembed on demand
+            related_keys = related_mod.related(
+                _related_query(meta, ft),
+                exclude_citekey=meta.citekey,
+                exclude_also={old_ck},
+            )
+            node = run_node(ft, valid_topics(), focus_hint=focus_hint)
+            if not node.ok and not node.bullets:
+                node = NodeResult(bullets="", topics=node.topics, error=node.error)
+            path = note_render.update_published(
+                existing, meta, ft, node, related_keys, code,
+                conference=conf_slug, metadata_only=False,
+            )
+            topics, node_error = node.topics, node.error
+        else:
+            # Fail-safe: published PDF not accessible — keep the preprint's node /
+            # full text, flip only the metadata (pub_type, venue, year, DOI).
+            code, related_keys, topics, node_error = [], [], [], ""
+            path = note_render.update_published(
+                existing, meta, "", NodeResult(bullets="", topics=[]), [], [],
+                metadata_only=True,
+            )
+        # Prune the stale preprint-citekey entry / register the new one.
+        from . import related as related_mod
+        related_mod.build_index()
+    except Exception as e:
+        return Result(status="error", message=f"failed while updating the note: {e}", meta=meta)
+
+    new_ck = path.stem.lstrip("@")
+    rename = f"@{old_ck} -> @{new_ck}" if new_ck != old_ck else f"@{new_ck}"
+    if sufficient:
+        message = f"Updated {rename} (now peer-reviewed: {meta.venue})".rstrip(": ")
+    else:
+        message = (f"Updated {rename} to peer-reviewed "
+                   "(kept preprint full text — published PDF not accessible)")
+    return Result(
+        status="ok",
+        message=message,
+        note_path=str(path),
+        meta=meta,
+        related=related_keys,
+        topics=topics,
+        code=code,
+        word_count=wc,
+        node_error=node_error,
+        conference=conf_slug,
+        updated_from=old_ck,
+    )
 
 
 def process_pdf(
@@ -76,6 +136,9 @@ def process_pdf(
         head_text = fulltext.first_pages_text(pdf_path, n=2)
     except Exception:
         head_text = ft[:4000]
+    # Embedded PDF document-info/XMP metadata — recovers identity for PDFs that
+    # print no DOI in the body (old Elsevier/ScienceDirect stamp the PII here).
+    emb = fulltext.embedded_metadata(pdf_path)
     try:
         meta = metadata.get_metadata(
             doi=doi,
@@ -83,13 +146,36 @@ def process_pdf(
             doi_text=ft,
             arxiv_id=arxiv_id,
             source_hint=pdf_path.name,
+            embedded_title=emb.get("title", ""),
+            embedded_doi=emb.get("doi", ""),
         )
     except Exception as e:
         return Result(status="error", message=f"couldn't fetch metadata: {e}")
 
-    # 3. Sufficiency gate
     wc = fulltext.word_count(ft)
     min_words = int(CONFIG["fulltext"]["min_words"])
+
+    # 2b. Preprint -> published? If this published paper links back to a preprint
+    # we already have a note for, update that note in place (rename + backlink
+    # rewrite) instead of writing a duplicate. Checked BEFORE the sufficiency gate
+    # so a paywalled published re-drop can still flip the note to peer-reviewed.
+    existing = None
+    if not meta.is_preprint:
+        existing = (
+            note_render.find_note_by_doi(meta.preprint_doi)
+            or note_render.find_preprint_by_title(meta)
+        )
+        if existing is None:
+            # Robust fallback: journals routinely retitle papers between preprint
+            # and publication (and Crossref's has-preprint lags), so exact title /
+            # relation matching misses. Embedding similarity over the vault index
+            # catches the same paper under a new title (~0.99 cosine).
+            from . import related as related_mod  # lazy: loads fastembed on demand
+            existing = related_mod.find_similar_preprint(meta, _related_query(meta, ft))
+    if existing is not None:
+        return _update_published_note(existing, meta, ft, wc, min_words, focus_hint, conf_slug)
+
+    # 3. Sufficiency gate
     if wc < min_words:
         reason = SCANNED if wc < 50 else ABSTRACT_ONLY
         return Result(

@@ -146,6 +146,202 @@ def write_note(
     return path
 
 
+# --- preprint -> published in-place update -------------------------------------
+
+# NB: match intra-line whitespace with [ \t], never \s — a blank field value
+# (e.g. "dateread:") followed by \s* would swallow the newline and merge the
+# next frontmatter line into the capture.
+_FM_FIELD_RE = {
+    "pub_type": re.compile(r"(?m)^pub_type:[ \t]*(.*)$"),
+    "citekey": re.compile(r"(?m)^citekey:[ \t]*(.*)$"),
+    "status": re.compile(r"(?m)^status:[ \t]*(.*)$"),
+    "dateread": re.compile(r"(?m)^dateread:[ \t]*(.*)$"),
+    "year": re.compile(r"(?m)^year:[ \t]*(.*)$"),
+    "doi": re.compile(r"(?m)^doi:[ \t]*(.*)$"),
+    "tags": re.compile(r"(?m)^tags:[ \t]*\[(.*)\][ \t]*$"),
+}
+_CONTRIBUTION_RE = re.compile(r"(?m)^(>\s*\*\*Contribution\*\*::)(.*)$")
+_CALLOUT_FIELD_RE = {
+    "Year": re.compile(r"(?m)^(>\s*\*\*Year\*\*::).*$"),
+    "Journal": re.compile(r"(?m)^(>\s*\*\*Journal\*\*::).*$"),
+    "Citekey": re.compile(r"(?m)^(>\s*\*\*Citekey\*\*::).*$"),
+    "DOI": re.compile(r"(?m)^(>\s*\*\*DOI\*\*::).*$"),
+}
+_LINK_LINE_RE = re.compile(r"(?m)^(> \[[^\]]*\]\()[^)]*(\).*)$")
+_PREPRINT_LINK_LINE_RE = re.compile(
+    r"(?m)^> \[DOI\]\(https?://(?:dx\.)?doi\.org/[^)]*\)\n?"
+)
+_ABSTRACT_LINE_RE = re.compile(r"(?m)^(> \[!Abstract\]\n)(>.*)$")
+
+
+def _fm_pub_type(path: Path) -> str:
+    m = _FM_PUB_TYPE_RE.search(path.read_text(errors="ignore"))
+    return m.group(1) if m else ""
+
+
+def find_note_by_doi(doi: str) -> Path | None:
+    """The existing note whose frontmatter ``doi:`` equals ``doi`` (e.g. a
+    preprint note we can update when its published version is dropped)."""
+    if not doi:
+        return None
+    for f in sorted(notes_dir().glob("@*.md")):
+        if _existing_doi(f) == doi:
+            return f
+    return None
+
+
+def _norm_title(s: str) -> str:
+    s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _last_name(author: str) -> str:
+    if not author:
+        return ""
+    last = author.split(",")[0] if "," in author else author.split()[-1]
+    return re.sub(r"[^a-z]", "", last.lower())
+
+
+_NOTE_TITLE_RE = re.compile(r"(?m)^>\s*\*\*Title\*\*::\s*(.+)$")
+_NOTE_AUTHORS_RE = re.compile(r"(?m)^>\s*\*\*Authors\*\*::\s*(.+)$")
+
+
+def find_preprint_by_title(meta: PaperMeta) -> Path | None:
+    """Fallback match when no DOI relation is available: an existing *preprint*
+    note with the exact same (normalized) title AND the same first-author last
+    name. Tightly gated so a published drop never clobbers an unrelated note."""
+    want_title = _norm_title(meta.title)
+    if not want_title or not meta.authors:
+        return None
+    want_last = _last_name(meta.authors[0])
+    for f in sorted(notes_dir().glob("@*.md")):
+        if _fm_pub_type(f) != "preprint":
+            continue
+        txt = f.read_text(errors="ignore")
+        mt = _NOTE_TITLE_RE.search(txt)
+        if not mt or _norm_title(mt.group(1)) != want_title:
+            continue
+        ma = _NOTE_AUTHORS_RE.search(txt)
+        note_last = _last_name(ma.group(1).split(";")[0]) if ma else ""
+        if want_last and note_last and want_last == note_last:
+            return f
+    return None
+
+
+def _preserve_user_fields(old_text: str) -> dict:
+    """The user's reading state, which a re-render would otherwise reset."""
+    out = {}
+    for key in ("status", "dateread"):
+        m = _FM_FIELD_RE[key].search(old_text)
+        out[key] = m.group(1).strip() if m else ""
+    mc = _CONTRIBUTION_RE.search(old_text)
+    out["contribution"] = mc.group(2).strip() if mc else ""
+    return out
+
+
+def _apply_preserved(md: str, fields: dict) -> str:
+    md = _FM_FIELD_RE["status"].sub(f"status: {fields.get('status', '')}".rstrip(), md, count=1)
+    md = _FM_FIELD_RE["dateread"].sub(f"dateread: {fields.get('dateread', '')}".rstrip(), md, count=1)
+    contrib = fields.get("contribution", "")
+    if contrib:
+        md = _CONTRIBUTION_RE.sub(lambda m: f"{m.group(1)} {contrib}", md, count=1)
+    return md
+
+
+def _apply_published_metadata(old_text: str, meta: PaperMeta) -> str:
+    """Surgically flip only the metadata on an existing preprint note so its
+    node / full text / related / user edits survive untouched (the fail-safe
+    path when the published full text isn't accessible)."""
+    md = old_text
+    md = _FM_FIELD_RE["pub_type"].sub("pub_type: peer-reviewed", md, count=1)
+    md = _FM_FIELD_RE["tags"].sub(
+        lambda m: "tags: [" + re.sub(r"\bpreprint\b", "peer-reviewed", m.group(1)) + "]",
+        md, count=1,
+    )
+    md = _FM_FIELD_RE["citekey"].sub(f"citekey: {meta.citekey}", md, count=1)
+    if meta.year:
+        md = _FM_FIELD_RE["year"].sub(f"year: {meta.year}", md, count=1)
+    md = _FM_FIELD_RE["doi"].sub(f"doi: {meta.doi}", md, count=1)
+
+    doi_url = f"https://doi.org/{meta.doi}" if meta.doi else (meta.url or "")
+    md = _LINK_LINE_RE.sub(lambda m: f"{m.group(1)}{doi_url}{m.group(2)}", md, count=1)
+    # No longer a preprint: drop the secondary preprint DOI line.
+    md = _PREPRINT_LINK_LINE_RE.sub("", md, count=1)
+
+    md = _CALLOUT_FIELD_RE["Citekey"].sub(lambda m: f"{m.group(1)} {meta.citekey}", md, count=1)
+    md = _CALLOUT_FIELD_RE["DOI"].sub(lambda m: f"{m.group(1)} {meta.doi}", md, count=1)
+    if meta.year:
+        md = _CALLOUT_FIELD_RE["Year"].sub(lambda m: f"{m.group(1)} {meta.year}", md, count=1)
+    if meta.venue:
+        venue = _one_line(meta.venue)
+        md = _CALLOUT_FIELD_RE["Journal"].sub(lambda m: f"{m.group(1)} {venue}", md, count=1)
+    if meta.abstract:
+        abs = _one_line(meta.abstract)
+        md = _ABSTRACT_LINE_RE.sub(lambda m: f"{m.group(1)}> {abs}", md, count=1)
+    return md
+
+
+def rewrite_backlinks(old_ck: str, new_ck: str, skip: Path | None = None) -> int:
+    """Rewrite every [[@old_ck]] / [[@old_ck|alias]] / [[@old_ck#heading]] link
+    across the vault to the new citekey. Token-safe so @Smith_2024 never matches
+    inside @Smith_20240. Returns the number of files changed."""
+    if old_ck == new_ck:
+        return 0
+    pat = re.compile(r"\[\[@" + re.escape(old_ck) + r"(?=[\]|#])")
+    repl = f"[[@{new_ck}"
+    changed = 0
+    for f in sorted(notes_dir().glob("@*.md")):
+        if skip and f == skip:
+            continue
+        txt = f.read_text(errors="ignore")
+        new = pat.sub(repl, txt)
+        if new != txt:
+            f.write_text(new)
+            changed += 1
+    return changed
+
+
+def update_published(
+    old_path: Path,
+    meta: PaperMeta,
+    fulltext_md: str,
+    node: NodeResult,
+    related_keys: list[str],
+    code_links: list[str],
+    conference: str = "",
+    metadata_only: bool = False,
+) -> Path:
+    """Update an existing preprint note in place for its published version:
+    rename @Author_PreprintYear.md -> @Author_PubYear.md, refresh content (or
+    just flip metadata when metadata_only), rewrite backlinks, and always
+    preserve the user's status / dateread / Contribution edits."""
+    old_text = old_path.read_text()
+    old_ck = old_path.stem.lstrip("@")
+    preserved = _preserve_user_fields(old_text)
+
+    # Resolve the destination. If the published citekey is unchanged (preprint
+    # and journal share a year), update the same file — don't let target_path
+    # suffix it just because the DOI changed. Otherwise target_path picks the new
+    # @Author_PubYear.md, suffixing only against a *different* existing paper.
+    base = notes_dir() / f"@{meta.citekey}.md"
+    new_path = old_path if base == old_path else target_path(meta.citekey, meta.doi)
+    meta.citekey = new_path.stem.lstrip("@")
+
+    if metadata_only:
+        # Keeps the old node / full text / related; an absent publisher abstract
+        # leaves the preprint abstract untouched (handled in the applier).
+        md = _apply_published_metadata(old_text, meta)
+    else:
+        md = render(meta, fulltext_md, node, related_keys, code_links, conference=conference)
+        md = _apply_preserved(md, preserved)
+
+    new_path.write_text(md)
+    if new_path != old_path and old_path.exists():
+        old_path.unlink()
+    rewrite_backlinks(old_ck, meta.citekey, skip=new_path)
+    return new_path
+
+
 def render_poster(
     citekey: str,
     title: str,
