@@ -1,4 +1,5 @@
-# Literature automation: all scientific works in one place 
+# Literature automation
+### Save, link and query all literature you come across through one Slack message 
 
 **Drop a paper in Slack → get a structured, cross-linked Obsidian literature note back.** A self-hosted, mostly-deterministic pipeline that turns a PDF, a DOI/URL, or a phone photo of a conference poster into a clean Markdown note wired into a topic knowledge graph — with a single, tightly-scoped LLM step doing the only part that actually needs a model.
 
