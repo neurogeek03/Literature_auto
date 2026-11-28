@@ -14,9 +14,9 @@ from pathlib import Path
 
 from .config import ROOT, claude_bin
 
-NAME = "paper-pipeline"
-MAC_LABEL = "com.paperpipeline.listener"
-OLD_MAC_LABELS = ["com.user.paperpipeline.listener", "com.user.paperpipeline.catchup"]
+NAME = "litauto"
+MAC_LABEL = "com.litauto.listener"
+OLD_MAC_LABELS = ["com.user.paperpipeline.listener", "com.user.paperpipeline.catchup", "com.paperpipeline.listener"]
 
 
 def _path_env() -> str:
@@ -94,7 +94,7 @@ def _unit() -> Path:
 
 def _linux_install() -> None:
     unit = f"""[Unit]
-Description=Paper pipeline Slack listener
+Description=LitAuto Slack listener
 After=network-online.target
 
 [Service]
@@ -127,7 +127,7 @@ def _linux_status() -> str:
 # ----- Windows -----
 
 def _win_launcher() -> Path:
-    return ROOT / ".cache" / "start-paper-pipeline.cmd"
+    return ROOT / ".cache" / "start-litauto.cmd"
 
 
 def _win_install() -> None:

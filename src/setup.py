@@ -139,7 +139,7 @@ def setup_slack() -> None:
     say(f"  2. Pick your workspace and paste the contents of {ROOT / 'slack_manifest.yaml'}")
     say("  3. Create, then Install to Workspace")
     say("  4. Basic Information -> App-Level Tokens -> Generate (scope connections:write)")
-    say("  5. In Slack, make a private channel and type /invite @paper-pipeline")
+    say("  5. In Slack, make a private channel and type /invite @litauto")
     env = read_env()
     env["SLACK_BOT_TOKEN"] = ask("Bot token (OAuth & Permissions page, starts xoxb-)", env.get("SLACK_BOT_TOKEN", ""))
     env["SLACK_APP_TOKEN"] = ask("App-level token (starts xapp-)", env.get("SLACK_APP_TOKEN", ""))
@@ -167,7 +167,7 @@ def setup_slack() -> None:
             client.conversations_info(channel=channel)
             break
         except Exception:
-            say("I can't see that channel. Check the ID and that you invited the bot (/invite @paper-pipeline).")
+            say("I can't see that channel. Check the ID and that you invited the bot (/invite @litauto).")
     update_config(["slack", "channel_id"], quoted(channel))
     say("Slack is connected.")
 
@@ -223,13 +223,13 @@ def setup_service() -> None:
 
     WebClient(token=read_env()["SLACK_BOT_TOKEN"]).chat_postMessage(
         channel=get_yaml(["slack", "channel_id"]),
-        text="Paper pipeline is set up. Drop a PDF, DOI or poster photo here to try it.",
+        text="LitAuto is set up. Drop a PDF, DOI or poster photo here to try it.",
     )
     say("Done! Check your Slack channel for a hello message.")
 
 
 def main() -> None:
-    say("Paper pipeline setup. Press Enter to keep a value shown in [brackets].")
+    say("LitAuto setup. Press Enter to keep a value shown in [brackets].")
     check_claude()
     setup_config()
     setup_slack()

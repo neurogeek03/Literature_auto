@@ -1,11 +1,11 @@
 ---
 name: setup-pipeline
-description: Guide a new user (often a biologist, not a programmer) through setting up this paper pipeline on their own computer - Obsidian vault, Slack app, research topics, Claude skills, optional podcasts and Spotify, and the background service. Use when the user says "set me up", "install this", "help me set up the pipeline", "configure the paper pipeline", or is stuck on a setup step.
+description: Guide a new user (often a biologist, not a programmer) through setting up LitAuto (Literature Automation), this paper pipeline, on their own computer - Obsidian vault, Slack app, research topics, Claude skills, optional podcasts and Spotify, and the background service. Use when the user says "set me up", "install this", "help me set up LitAuto", "configure the paper pipeline", or is stuck on a setup step.
 ---
 
 # setup-pipeline
 
-You are helping someone set up the paper pipeline in this repository on their own
+You are helping someone set up LitAuto (Literature Automation), the paper pipeline in this repository, on their own
 computer (macOS, Linux or Windows). Assume they are a scientist who may never have
 used a terminal. Explain each step in one or two plain sentences, do the technical
 work yourself, and only ask them for things only they can do (click in Slack,
@@ -37,7 +37,7 @@ Run commands from the repository root. Use `uv run python ...` for everything.
       -> paste `slack_manifest.yaml` (show them its contents) -> Create -> Install to Workspace.
    2. Basic Information -> App-Level Tokens -> Generate, scope `connections:write`.
    3. OAuth & Permissions -> copy the Bot User OAuth Token.
-   4. In Slack: create a private channel, type `/invite @paper-pipeline`, copy the
+   4. In Slack: create a private channel, type `/invite @litauto`, copy the
       channel ID (click the channel name -> bottom of the About tab).
    Write `SLACK_BOT_TOKEN=...` and `SLACK_APP_TOKEN=...` into `.env` (keep other lines),
    set `['slack','channel_id']`, then verify with

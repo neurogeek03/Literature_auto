@@ -1,4 +1,4 @@
-# Literature automation
+# LitAuto: Literature Automation
 ### Save, link and query all literature you come across through one Slack message
 
 **Drop a paper in Slack → get a structured, cross-linked Obsidian literature note back.
@@ -35,8 +35,8 @@ You need: a Slack workspace where you can add apps, [Obsidian](https://obsidian.
    - [Claude Code](https://docs.claude.com/en/docs/claude-code), then type `claude` in a terminal once to log in
 2. **Download the pipeline:**
    ```bash
-   git clone https://github.com/neurogeek03/Literature_auto.git
-   cd Literature_auto
+   git clone https://github.com/neurogeek03/Literature_auto.git LitAuto
+   cd LitAuto
    ```
    (No git? Use the green **Code → Download ZIP** button on GitHub and unzip it.)
 3. **Let Claude set it up.** In that folder, type `claude` and say **"set me up"**.

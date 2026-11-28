@@ -1,7 +1,7 @@
 [project]
-name = "paper-pipeline"
+name = "litauto"
 version = "0.1.0"
-description = "Deterministic Slack -> Obsidian paper pipeline (full text as Markdown, Sonnet key-points node, topic knowledge graph)"
+description = "LitAuto (Literature Automation): Slack -> Obsidian paper pipeline (full text as Markdown, Sonnet key-points node, topic knowledge graph)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

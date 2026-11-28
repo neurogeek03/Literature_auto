@@ -1,4 +1,4 @@
-# CLAUDE.md — Paper Pipeline
+# CLAUDE.md — LitAuto (Literature Automation)
 
 Context for any Claude session working in this repo. Read `PLAN.md` for full
 design and rationale; this is the fast orientation.
@@ -152,8 +152,8 @@ Offline CLI (no Slack): `uv run python -m src.process_poster /path/to/image.jpg
 ## Runtime & availability
 
 One background service per OS, installed by `python -m src.service install`
-(launchd `com.paperpipeline.listener` / systemd user unit `paper-pipeline` /
-Task Scheduler task `paper-pipeline` running `src/supervise.py`). It runs the
+(launchd `com.litauto.listener` / systemd user unit `litauto` /
+Task Scheduler task `litauto` running `src/supervise.py`). It runs the
 listener (Socket Mode), which also runs catch-up at start and hourly in a
 thread; there is no separate timer service. Socket Mode does **not** replay
 missed events, but nothing is lost: Slack is the durable queue and `catchup.py`
