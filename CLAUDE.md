@@ -18,9 +18,10 @@ forever.
 - **Obsidian-only. No Zotero, no PDF kept.** Zotero is the user's separate manual
   habit for deep reads; the pipeline must not touch it. Full text is stored as
   Markdown inside the note, collapsed.
-- **Deterministic everywhere except the node.** Metadata, full-text conversion,
-  code-link extraction, and related-links (fastembed) are fixed functions — same
-  input, same output. The ONLY model/LLM step is the `paper-node` block.
+- **Deterministic everywhere except the node (and on-demand podcasts).** Metadata,
+  full-text conversion, code-link extraction, and related-links (fastembed) are
+  fixed functions — same input, same output. The only automatic LLM step is the
+  `paper-node` block; the `paper-podcast` step runs only when the user asks.
 - **The node comes from headless Claude Code on the user's subscription, not the
   API.** `claude -p "/paper-node" --model claude-sonnet-4-6`, output is 5–10
   key-point bullets (no length cap), written between `%% node:start %%` /
@@ -29,7 +30,14 @@ forever.
 - **Secrets in `.env`, paths in `config.yaml` (both gitignored).** No tokens or
   absolute user paths hardcoded in `src/`.
 - **NotebookLM has no API.** Only stage a PDF to Drive + post a link when the user
-  opts in by dropping the actual PDF. Never try to auto-generate a podcast.
+  opts in by dropping the actual PDF.
+- **Podcasts are on demand only.** Replying `podcast [short|long|N min]
+  [critique|debate] [focus]` in a paper's Slack thread runs `src/podcast.py` as a
+  separate process: `paper-podcast` skill via headless `claude -p` (Sonnet, 3 calls:
+  outline, draft, revise) -> local Kokoro (mlx-audio) -> MP3 posted to the thread
+  (`files:write` scope) -> `spotify_upload.py` (Playwright with saved login in
+  `.cache/spotify_profile`, fallback `claude -p --chrome`) -> local MP3 deleted.
+  Never generate a podcast without that reply. Public papers only.
 - **Full-text sufficiency gate.** If the converted text is too short (abstract
   only, paywall landing page, or scanned/no-text PDF), do NOT write a note —
   reply in Slack asking for the full PDF, naming the paper + word count. Threshold
@@ -142,6 +150,23 @@ channel is the durable queue, and `catchup.py` reconciles anything dropped while
 the Mac was off (on launchd start, a periodic timer, and wake-from-sleep) using
 the `state.json` last-processed timestamp. The Mac is in the loop regardless
 because the vault write and the Sonnet node both live here.
+
+## Per-podcast flow
+
+1. Thread reply `podcast ...` -> `slack_listener._handle_podcast`: finds the note
+   from the bot's card in the thread (obsidian URI), reacts, spawns
+   `python -m src.podcast`. Thread replies never move the catch-up cursor.
+2. `podcast_script.py`: outline -> draft -> revise, then a deterministic check
+   for digits/symbols/long lines with one `fix` call. Script cached in
+   `.cache/podcasts/<citekey>.json` (`--reuse-script` re-voices it).
+3. `podcast_audio.py`: Kokoro line by line, pauses from `config.yaml`, ffmpeg
+   -> mono 96 kbps MP3.
+4. Slack upload, Spotify upload, then the MP3 is deleted. Failures reply in the
+   thread and keep the MP3.
+
+Offline: `uv run python -m src.podcast <note.md> --no-upload`. Deps: `uv sync
+--extra drive --extra podcast`. Skill source `skills/paper-podcast/SKILL.md`
+(copy to `~/.claude/skills/`).
 
 ## Repo layout
 

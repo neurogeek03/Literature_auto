@@ -22,7 +22,7 @@ minority of papers I read deeply.
 | Note engine | Deterministic skeleton + one **headless Claude Code (Sonnet)** call for the node. |
 | Node format | **Bullets only** (5–10 key points): main findings, key innovation, notable author/lab if relevant. Plus **1–3 topic wikilinks** from the fixed vocabulary (§ Knowledge graph) emitted for the Connections block. One `paper-node` call, two outputs. |
 | Graph source | **Obsidian vault** (`/Users/marlenfaf/Desktop/UofT_PhD/literature_auto`). |
-| Podcast | **NotebookLM, manual, opt-in.** Only when I drop the actual PDF and want one. |
+| Podcast | **On demand from Slack.** Reply `podcast [options] [focus]` in a paper's thread: `paper-podcast` skill (headless Claude, Sonnet) writes a two-host script from the note's full text, local Kokoro voices it, MP3 posted to the thread and uploaded to Spotify for Creators (Playwright, Claude in Chrome fallback). NotebookLM Drive staging still available. |
 
 ## Why Obsidian-only (storage)
 
@@ -281,9 +281,8 @@ paper-pipeline/
 
 ## Out of scope (for now)
 
-- Auto-generating the podcast (NotebookLM stays a manual click).
 - Any Zotero integration (kept fully separate/manual).
-- LLM anywhere except the isolated `paper-node` block.
+- LLM anywhere except the isolated `paper-node` block and the on-demand `paper-podcast` step.
 - **Karpathy-style synthesis pass** — once enough papers have accumulated under a
   topic, periodically run an LLM pass that reads all notes for that topic and
   writes a synthesis article into the topic stub (`topics/<name>.md`). Topic stubs

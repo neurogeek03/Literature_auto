@@ -228,3 +228,54 @@ independent causes, both to be fixed:
 
 **Status:** Proposed. ODL confirmed (`opendataloader-pdf`, local deterministic mode,
 Java-in-uv). Not yet implemented.
+
+---
+
+## 9. MCP server: let Claude add papers to the vault directly
+
+Recorded 2026-11-24.
+
+**Idea:** Expose the pipeline as an MCP server so a Claude session can push papers into
+the vault without going through Slack. Two calling patterns to support:
+
+- **Batch.** A session that has just finished a literature search hands over a list of
+  DOIs/PMIDs in one call and gets back one note per paper. This is the motivating case:
+  a reviewer-response literature sweep produced ~13 papers to add at once, and the only
+  available route was pasting them into Slack one at a time.
+- **Single.** Claude finds one paper mid-conversation and adds it immediately, so the
+  citation is available in the vault before the session ends.
+
+**Why MCP rather than just shelling out to `process_paper.py`:** the CLI takes a PDF path
+only. DOI/URL resolution (OpenAlex -> Unpaywall -> landing-page `citation_pdf_url`) lives
+in `slack_listener.py`, so a non-Slack caller cannot reach it. An MCP server would wrap
+the same resolution chain, making Slack one front end among several rather than the only
+door.
+
+**Sketch of the tool surface:**
+- `add_paper(doi | pmid | url | pdf_path, prompt_text="")` -> note path, citekey, topics,
+  related, plus the Slack-style status (`ok` / `insufficient_text` / `error`).
+- `add_papers([...])` -> same, batched, with per-item status so partial failure is
+  visible rather than fatal.
+- `lookup(query)` -> read-only check for whether a paper is already in the vault, so a
+  session can avoid duplicate work. Should also surface citekey collisions (two papers by
+  the same first author in the same year, e.g. the two Arbabi 2026 entries).
+
+**Design constraints to respect:**
+- Keep the determinism boundary. The MCP server is plumbing; the only LLM step stays
+  `node.py`. A calling model must not be able to supply its own key points or topic tags.
+- Reuse `state.json` / the dedupe marker so an MCP-added paper is not reprocessed if the
+  same DOI later arrives via Slack.
+- Paywalled papers will still fail resolution. The reply should say so explicitly and name
+  the PDF-drop fallback, same as the Slack path does. See item 7 (Claude-in-Chrome
+  acquisition fallback) — these two compose well.
+
+**Open questions:**
+- Should `add_paper` block until the note is written, or queue and return a handle? The
+  node step is a headless `claude -p` call and can be slow; a batch of 13 would be a long
+  single call.
+- Does a non-Slack caller need the Google Drive / NotebookLM staging step, or is that
+  Slack-path-only?
+- Citekey collision policy: today's behaviour on a second `Author_Year` needs checking
+  before the batch path can be trusted.
+
+**Status:** Proposed, not scoped.

@@ -81,6 +81,11 @@ def send(client, channel: str, text: str, thread_ts: str | None = None) -> None:
     )
 
 
+def upload_file(client, channel: str, path, title: str, thread_ts: str | None = None) -> None:
+    # Needs the files:write bot scope.
+    client.files_upload_v2(channel=channel, file=str(path), title=title, thread_ts=thread_ts)
+
+
 def post_result(
     client,
     channel: str,

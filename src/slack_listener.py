@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -17,7 +19,7 @@ from pathlib import Path
 
 import requests
 
-from . import drive, metadata, slack_post
+from . import drive, metadata, podcast, slack_post
 from .config import CONFIG, resolve_path
 from .process_paper import process_pdf
 from .process_poster import process_image
@@ -145,6 +147,13 @@ def handle_event(client, event: dict) -> None:
     files = event.get("files") or []
     text = event.get("text") or ""
 
+    # A reply inside a paper's thread: "podcast [options/focus]".
+    thread_ts = event.get("thread_ts")
+    is_reply = bool(thread_ts) and thread_ts != ts
+    if is_reply and podcast.parse_command(text) is not None:
+        _handle_podcast(client, channel, thread_ts, ts, text)
+        return
+
     pdfs = [f for f in files if (f.get("filetype") == "pdf" or f.get("name", "").lower().endswith(".pdf"))]
     images = [f for f in files if _is_image_file(f)]
 
@@ -184,7 +193,58 @@ def handle_event(client, event: dict) -> None:
     # Only mark done (reaction + state) once we've genuinely handled it — including
     # the branches that reply asking for the PDF, which count as a response.
     _react(client, channel, ts)
-    save_last_ts(ts)
+    if not is_reply:
+        save_last_ts(ts)  # thread replies must not move the catch-up cursor
+
+
+def _note_from_thread(client, channel: str, thread_ts: str) -> Path | None:
+    """The paper note linked from the bot's latest result card in this thread."""
+    from urllib.parse import unquote
+
+    msgs = client.conversations_replies(channel=channel, ts=thread_ts).get("messages", [])
+    for m in reversed(msgs):
+        hit = re.search(r"obsidian://open\?path=([^|>\s]+)", m.get("text") or "")
+        if m.get("bot_id") and hit:
+            p = Path(unquote(hit.group(1)))
+            if p.exists():
+                return p
+    return None
+
+
+def _handle_podcast(client, channel: str, thread_ts: str, ts: str, text: str) -> None:
+    opts = podcast.parse_command(text)
+    try:
+        note = _note_from_thread(client, channel, thread_ts)
+    except Exception as e:
+        slack_post.send(client, channel, f"Couldn't read this thread (`{e}`).", thread_ts=thread_ts)
+        return
+    if not note:
+        slack_post.send(
+            client, channel,
+            "I can't find a paper note in this thread. Reply `podcast` under one of my paper cards.",
+            thread_ts=thread_ts,
+        )
+        return
+
+    try:
+        client.reactions_add(channel=channel, timestamp=ts, name="hourglass_flowing_sand")
+    except Exception:
+        pass
+    focus = f" Focus: _{opts['focus']}_." if opts["focus"] else ""
+    slack_post.send(
+        client, channel,
+        f"Making a {opts['minutes']}-minute {opts['format'].replace('_', ' ')} podcast.{focus} "
+        "This takes a while; I'll post it here.",
+        thread_ts=thread_ts,
+    )
+    # Separate process: a listener restart (watchdog) must not kill a long job.
+    log = open(resolve_path(".cache/podcast.log"), "a")
+    subprocess.Popen(
+        [sys.executable, "-m", "src.podcast", str(note),
+         "--minutes", str(opts["minutes"]), "--format", opts["format"], "--focus", opts["focus"],
+         "--channel", channel, "--thread", thread_ts, "--reply-ts", ts],
+        cwd=CONFIG["_root"], stdout=log, stderr=log, start_new_session=True,
+    )
 
 
 def _run_and_reply(

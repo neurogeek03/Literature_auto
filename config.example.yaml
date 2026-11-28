@@ -62,3 +62,18 @@ conferences:
 paths:
   work_dir: .cache/work     # transient downloaded PDFs
   state_file: state.json    # last-processed Slack timestamp
+
+# Two-host podcast of a paper: reply "podcast [short|long|N min] [critique|debate] [focus]"
+# in the paper's Slack thread. Script by headless Claude, voices by local Kokoro.
+podcast:
+  model: claude-sonnet-5-5    # writes the script (3 calls per episode)
+  skill: paper-podcast
+  minutes: 25                 # default length
+  timeout_seconds: 1200       # per claude call
+  kokoro_model: mlx-community/Kokoro-82M-bf16
+  voices: {A: af_heart, B: am_michael}
+  pauses: {turn: 0.35, same_speaker: 0.2, backchannel: 0.15, interrupt: 0.05, segment: 0.8}
+  work_dir: .cache/podcasts   # MP3 is deleted once delivered; script JSON kept
+  spotify:
+    enabled: false            # turn on after `python -m src.spotify_upload --login`
+    show_url: ""              # your show page in Spotify for Creators

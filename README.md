@@ -22,32 +22,41 @@ This is an autonomous, event-driven agent with a deliberately **small** LLM surf
 
 ## Architecture
 
-```
-          Slack (durable queue)
-                  │
-     ┌────────────┴─────────────┐
- slack_listener.py          catchup.py        ← same shared handler; state.json cursor
-   (Socket Mode)        (replays missed drops)
-                  │
-                  ▼
-   ┌──────────── process_paper.py (orchestrator) ───────────┐   ← deterministic except one step
-   │                                                         │
-   │  metadata.py   DOI → Crossref/OpenAlex → clean fields   │
-   │  fulltext.py   PDF → Markdown (pymupdf4llm) + gate      │
-   │  codelinks.py  regex code/data availability extraction  │
-   │  related.py    fastembed + cosine → related notes       │
-   │  node.py       ★ headless Claude Code: key points+tags  │   ← the ONLY LLM node
-   │  note_render.py template → vault note (+ preprint dedup)│
-   │  drive.py      optional: stage PDF → Drive/NotebookLM   │
-   └─────────────────────────┬───────────────────────────────┘
-                             ▼
-                   Obsidian vault note
-              (cross-linked into topic graph)
-                             │
-                      slack_post.py → reply card / prompt / error (never a silent no-op)
+```mermaid
+flowchart TD
+    SLACK["Slack channel<br/>(durable queue)"]
+    STATE[("state.json<br/>cursor")]
+    LISTEN["slack_listener.py<br/>Socket Mode"]
+    CATCH["catchup.py<br/>replays missed drops"]
 
-   Image drops (poster/slide photo) take the parallel path:
-   process_poster.py → poster_node.py (★ vision LLM node) → note_render.py
+    SLACK --> LISTEN
+    SLACK --> CATCH
+    LISTEN <--> STATE
+    CATCH <--> STATE
+    LISTEN --> META
+    CATCH --> META
+
+    subgraph ORCH["process_paper.py &mdash; orchestrator (deterministic except one node)"]
+        direction TB
+        META["metadata.py<br/>DOI to Crossref / OpenAlex"]
+        FULL["fulltext.py<br/>PDF to Markdown + gate"]
+        CODE["codelinks.py<br/>code / data links"]
+        REL["related.py<br/>fastembed + cosine"]
+        NODE["node.py<br/>HEADLESS CLAUDE CODE<br/>key points + topic tags"]
+        REND["note_render.py<br/>template + preprint/published dedup"]
+        META --> FULL --> CODE --> REL --> NODE --> REND
+    end
+
+    IMG["Image drop<br/>poster / slide photo"] --> PPOST["process_poster.py"]
+    PPOST --> PNODE["poster_node.py<br/>VISION LLM NODE"]
+    PNODE --> REND
+
+    REND --> VAULT[("Obsidian vault note<br/>cross-linked topic graph")]
+    REND --> POST["slack_post.py<br/>reply card / prompt / error"]
+    REND -. optional .-> DRIVE["drive.py<br/>Google Drive / NotebookLM"]
+
+    classDef llm fill:#2E5D43,stroke:#17281F,color:#F7F4EB;
+    class NODE,PNODE llm;
 ```
 
 **Module map**
@@ -102,7 +111,13 @@ cp config.example.yaml config.yaml   # set vault.path to your Obsidian vault
 uv run python scripts/setup_topics.py
 ```
 
-**Slack app:** create an app with **Socket Mode** enabled, add the bot to a private channel, and copy the Bot User OAuth Token (`xoxb-…`) and an App-Level Token (`xapp-…`, scope `connections:write`) into `.env`. Put the channel ID into `config.yaml`.
+**Slack app** (about 5 minutes):
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest** → pick your workspace → paste [`slack_manifest.yaml`](slack_manifest.yaml) → **Create** → **Install to Workspace**.
+2. **Basic Information → App-Level Tokens → Generate**, with scope `connections:write`. Copy the `xapp-…` token into `.env` as `SLACK_APP_TOKEN`.
+3. **OAuth & Permissions**: copy the Bot User OAuth Token (`xoxb-…`) into `.env` as `SLACK_BOT_TOKEN`.
+4. In Slack, create a private channel and type `/invite @paper-pipeline`. Put its channel ID (channel details, bottom of the About tab) into `config.yaml` → `slack.channel_id`.
+
+Each person runs their own copy: the app only forwards messages to the listener on your own Mac, which writes to your vault with your Claude login.
 
 ## Usage
 
@@ -119,7 +134,15 @@ uv run python -m src.process_poster /path/to/poster.jpg --prompt "ISMB 26 — po
 
 # Full manual re-embed of the vault index
 uv run python -m src.build_index
+
+# Podcast of a paper note (normally triggered by replying "podcast" in its Slack thread)
+uv sync --extra drive --extra podcast
+uv run python -m src.podcast "/path/to/vault/@Author_Year.md" --focus "the statistics" --no-upload
+uv run python -m src.spotify_upload --login   # one-time Spotify for Creators login
 ```
+
+In Slack, reply in a paper's thread: `podcast`, `podcast short`, `podcast 15 min critique`,
+or `podcast focus on the sex differences`. Needs the `files:write` bot scope to post the MP3.
 
 For unattended operation on macOS, the `launchd/` folder contains sample `.plist` files for the listener and the catch-up timer — **edit the absolute paths in them to match where you cloned the repo** before loading with `launchctl`.
 

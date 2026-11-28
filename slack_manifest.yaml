@@ -1,0 +1,26 @@
+# Slack app manifest for paper-pipeline.
+# api.slack.com/apps -> Create New App -> From a manifest -> pick workspace -> paste this.
+display_information:
+  name: Paper Pipeline
+  description: Turns papers dropped in a private channel into Obsidian notes (and podcasts on request).
+features:
+  bot_user:
+    display_name: paper-pipeline
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write        # reply cards and messages
+      - reactions:write   # check-mark / hourglass reactions
+      - files:read        # download dropped PDFs and images
+      - files:write       # post podcast MP3s
+      - groups:history    # read the private channel and its threads
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.groups    # messages in private channels the bot is in
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
