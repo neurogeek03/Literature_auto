@@ -91,7 +91,7 @@ def write_color_groups(vault: Path, groups: list[dict], *, dry_run: bool = False
             f"graph.json not found at {graph_path} (open the graph view once first)"
         )
 
-    config = json.loads(graph_path.read_text())
+    config = json.loads(graph_path.read_text(encoding="utf-8"))
     config["colorGroups"] = groups
 
     for g in groups:
@@ -105,7 +105,7 @@ def write_color_groups(vault: Path, groups: list[dict], *, dry_run: bool = False
     stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = graph_path.with_suffix(f".json.bak-{stamp}")
     shutil.copy2(graph_path, backup)
-    graph_path.write_text(json.dumps(config, indent=2))
+    graph_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     print(f"\nWrote {len(groups)} color groups to {graph_path}")
     print(f"Backup: {backup}")
     print("Reload the graph view (close/reopen) to see the colors.")

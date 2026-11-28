@@ -73,14 +73,14 @@ def render(
         "PUB_TYPE": pub_type,
         "TAGS": tags,
     }
-    md = _TEMPLATE.read_text()
+    md = _TEMPLATE.read_text(encoding="utf-8")
     for key, val in values.items():
         md = md.replace("{{" + key + "}}", val)
     return md
 
 
 def _existing_doi(path: Path) -> str:
-    m = _FM_DOI_RE.search(path.read_text(errors="ignore"))
+    m = _FM_DOI_RE.search(path.read_text(errors="ignore", encoding="utf-8"))
     return (m.group(1).strip() if m else "")
 
 
@@ -88,7 +88,7 @@ _FM_PUB_TYPE_RE = re.compile(r"(?m)^pub_type:\s*(\S+)")
 
 
 def _is_poster_note(path: Path) -> bool:
-    m = _FM_PUB_TYPE_RE.search(path.read_text(errors="ignore"))
+    m = _FM_PUB_TYPE_RE.search(path.read_text(errors="ignore", encoding="utf-8"))
     return bool(m) and m.group(1) in {"poster", "slide"}
 
 
@@ -142,7 +142,7 @@ def write_note(
     # Keep the citekey in the note consistent with the (possibly suffixed) filename.
     meta.citekey = path.stem.lstrip("@")
     md = render(meta, fulltext_md, node, related_keys, code_links, conference=conference)
-    path.write_text(md)
+    path.write_text(md, encoding="utf-8")
     return path
 
 
@@ -175,7 +175,7 @@ _ABSTRACT_LINE_RE = re.compile(r"(?m)^(> \[!Abstract\]\n)(>.*)$")
 
 
 def _fm_pub_type(path: Path) -> str:
-    m = _FM_PUB_TYPE_RE.search(path.read_text(errors="ignore"))
+    m = _FM_PUB_TYPE_RE.search(path.read_text(errors="ignore", encoding="utf-8"))
     return m.group(1) if m else ""
 
 
@@ -217,7 +217,7 @@ def find_preprint_by_title(meta: PaperMeta) -> Path | None:
     for f in sorted(notes_dir().glob("@*.md")):
         if _fm_pub_type(f) != "preprint":
             continue
-        txt = f.read_text(errors="ignore")
+        txt = f.read_text(errors="ignore", encoding="utf-8")
         mt = _NOTE_TITLE_RE.search(txt)
         if not mt or _norm_title(mt.group(1)) != want_title:
             continue
@@ -293,10 +293,10 @@ def rewrite_backlinks(old_ck: str, new_ck: str, skip: Path | None = None) -> int
     for f in sorted(notes_dir().glob("@*.md")):
         if skip and f == skip:
             continue
-        txt = f.read_text(errors="ignore")
+        txt = f.read_text(errors="ignore", encoding="utf-8")
         new = pat.sub(repl, txt)
         if new != txt:
-            f.write_text(new)
+            f.write_text(new, encoding="utf-8")
             changed += 1
     return changed
 
@@ -315,7 +315,7 @@ def update_published(
     rename @Author_PreprintYear.md -> @Author_PubYear.md, refresh content (or
     just flip metadata when metadata_only), rewrite backlinks, and always
     preserve the user's status / dateread / Contribution edits."""
-    old_text = old_path.read_text()
+    old_text = old_path.read_text(encoding="utf-8")
     old_ck = old_path.stem.lstrip("@")
     preserved = _preserve_user_fields(old_text)
 
@@ -335,7 +335,7 @@ def update_published(
         md = render(meta, fulltext_md, node, related_keys, code_links, conference=conference)
         md = _apply_preserved(md, preserved)
 
-    new_path.write_text(md)
+    new_path.write_text(md, encoding="utf-8")
     if new_path != old_path and old_path.exists():
         old_path.unlink()
     rewrite_backlinks(old_ck, meta.citekey, skip=new_path)
@@ -375,7 +375,7 @@ def render_poster(
         "IMAGE_FILENAME": image_filename,
         "TAGS": tags,
     }
-    md = _POSTER_TEMPLATE.read_text()
+    md = _POSTER_TEMPLATE.read_text(encoding="utf-8")
     for key, val in values.items():
         md = md.replace("{{" + key + "}}", val)
     return md
@@ -401,5 +401,5 @@ def write_poster_note(
         citekey, title, authors, year, venue, source_type,
         image_filename, topics, related_keys, node_bullets, conference=conference,
     )
-    path.write_text(md)
+    path.write_text(md, encoding="utf-8")
     return path

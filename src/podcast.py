@@ -50,7 +50,7 @@ def parse_command(text: str) -> dict | None:
 # ----- read the paper note -----
 
 def read_note(path: Path) -> dict:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
 
     def field(pat: str) -> str:
         m = re.search(pat, text, re.MULTILINE)
@@ -90,10 +90,10 @@ def make_podcast(note: Path, opts: dict, reuse_script: bool = False) -> tuple[Pa
     out_dir.mkdir(parents=True, exist_ok=True)
     script_path = out_dir / f"{paper['citekey']}.json"
     if reuse_script and script_path.exists():
-        script = json.loads(script_path.read_text())
+        script = json.loads(script_path.read_text(encoding="utf-8"))
     else:
         script = write_script(paper["fulltext"], paper["title"], opts["minutes"], opts["format"], opts["focus"])
-        script_path.write_text(json.dumps(script, indent=1))
+        script_path.write_text(json.dumps(script, indent=1), encoding="utf-8")
 
     mp3 = out_dir / f"{paper['citekey']}.mp3"
     secs = render_mp3(script, mp3)

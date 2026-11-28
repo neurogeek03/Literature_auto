@@ -295,7 +295,7 @@ _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
 
 def _arxiv_ua() -> str:
-    return f"paper-pipeline/1.0 (mailto:{_mailto()})" if _mailto() else "paper-pipeline/1.0"
+    return f"litauto/1.0 (mailto:{_mailto()})" if _mailto() else "litauto/1.0"
 
 
 def fetch_arxiv(arxiv_id: str) -> PaperMeta | None:

@@ -1,29 +1,36 @@
-# Copy to config.yaml and adjust. config.yaml is gitignored.
+# Pipeline settings. The setup wizard (`uv run python -m src.setup`, or ask Claude
+# Code "set me up") copies this to config.yaml and fills in the CORE values for you.
+# config.yaml is private (gitignored). Settings are grouped from must-have to optional.
+
+# =============================================================================
+# 1. CORE (required): where notes go and which Slack channel to watch
+# =============================================================================
 
 vault:
-  path: /ABSOLUTE/PATH/TO/YOUR/obsidian-vault   # create your own Obsidian vault, then put its absolute path here
+  path: ""                  # your Obsidian vault folder (the wizard asks for it)
   notes_subdir: ""          # "" = notes at vault root; or e.g. "papers"
   topics_subdir: topics     # topic hub stubs live here
   images_subdir: images     # poster/slide images embedded in notes live here
 
-# Your themes. Single source of truth for topic stubs, the skill vocabulary the
-# model picks from, and the graph colors (one color per top-level theme, shades
-# for its sub-themes). Don't hand-craft this — run `python scripts/setup_topics.py`,
-# which prompts you for your own themes and fills this in. Re-run anytime to add
-# more. The example below is just a placeholder to replace.
+slack:
+  channel_id: ""            # private channel ID (Cxxxxxxxx)
+
+metadata:
+  crossref_mailto: ""       # your email: Crossref/Unpaywall ask for one (polite use)
+  unpaywall_email: ""
+
+# Your themes: topic stubs, the vocabulary the model picks from, graph colors.
+# Filled in by the wizard (or `uv run python scripts/setup_topics.py`); re-run to add more.
 # === topics (managed by scripts/setup_topics.py — run that, or edit here + re-run) ===
-topics:
-  methods:
-    - {slug: pipelines, desc: "workflows, tooling, automation"}
-    - {slug: models, desc: "modeling and ML methods"}
-  reviews: []
+topics: {}
 # === end topics ===
 
-slack:
-  channel_id: ""            # private channel ID (Cxxxxxxxx), filled after app setup
+# =============================================================================
+# 2. TUNING (optional): defaults work for most people
+# =============================================================================
 
 fulltext:
-  min_words: 1000           # sufficiency gate: below this -> ask for the full PDF
+  min_words: 1000           # below this (abstract only, paywall page) -> ask for the full PDF
 
 related:
   model: BAAI/bge-small-en-v1.5
@@ -32,48 +39,50 @@ related:
   index_path: .cache/vault_index.json
 
 node:
-  claude_bin: /opt/homebrew/bin/claude   # absolute path (launchd has a minimal PATH)
+  claude_bin: ""            # Claude Code CLI; "" = find it automatically
   model: claude-sonnet-4-6
   skill: paper-node
-  poster_skill: poster-node   # vision variant, used for image (poster/slide) drops
+  poster_skill: poster-node # vision variant, used for image (poster/slide) drops
   timeout_seconds: 180
 
-metadata:
-  crossref_mailto: you@example.com   # your email — Crossref polite pool
-  unpaywall_email: you@example.com   # your email — Unpaywall OA lookup
-
-drive:
-  enabled: false
-  folder_id: ""             # NotebookLM staging folder (opt-in)
-
-# Conference whitelist for the caption-parsing tag (see IMPROVEMENTS.md #4).
-# Add new entries manually; the pipeline never invents a slug that isn't here,
-# but it does auto-create the vault sub-topic stub on first use of a known one.
+# Conference tags parsed from a drop's caption (e.g. "ISMB 26"). Add your own;
+# the pipeline never invents a slug that isn't listed here.
 conferences:
   - slug: ISMB_2026
     aliases: ["ISMB 26", "ISMB26", "ISMB 2026", "ISMB-26"]
   - slug: NeurIPS_2025
     aliases: ["NeurIPS 25", "neurips2025", "NeurIPS 2025"]
-  - slug: RECOMB_2026
-    aliases: ["RECOMB 26", "RECOMB 2026"]
-  - slug: CAN_2026
-    aliases: ["CAN 26", "CAN26", "CAN 2026", "CAN-26", "CAN-2026"]
 
 paths:
   work_dir: .cache/work     # transient downloaded PDFs
   state_file: state.json    # last-processed Slack timestamp
 
-# Two-host podcast of a paper: reply "podcast [short|long|N min] [critique|debate] [focus]"
-# in the paper's Slack thread. Script by headless Claude, voices by local Kokoro.
+drive:
+  enabled: false            # legacy: stage dropped PDFs to Google Drive for NotebookLM
+  folder_id: ""
+
+# =============================================================================
+# 3. PODCASTS (optional, on by default): reply "podcast" in a paper's thread
+#    -> two-host episode posted back to the thread. Runs on your computer.
+#    Options: "podcast [short|long|N min] [critique|debate] [focus...]"
+# =============================================================================
+
 podcast:
+  enabled: true
   model: claude-sonnet-5-5    # writes the script (3 calls per episode)
   skill: paper-podcast
   minutes: 25                 # default length
   timeout_seconds: 1200       # per claude call
-  kokoro_model: mlx-community/Kokoro-82M-bf16
+  kokoro_model: mlx-community/Kokoro-82M-bf16   # Apple Silicon; other computers use hexgrad/Kokoro-82M
   voices: {A: af_heart, B: am_michael}
   pauses: {turn: 0.35, same_speaker: 0.2, backchannel: 0.15, interrupt: 0.05, segment: 0.8}
   work_dir: .cache/podcasts   # MP3 is deleted once delivered; script JSON kept
+
+# =============================================================================
+# 4. SPOTIFY (optional, off by default): also publish each episode to your
+#    Spotify for Creators show. Needs a one-time `uv run python -m src.spotify_upload --login`.
+# =============================================================================
+
   spotify:
-    enabled: false            # turn on after `python -m src.spotify_upload --login`
-    show_url: ""              # your show page in Spotify for Creators
+    enabled: false
+    show_url: ""              # e.g. https://creators.spotify.com/pod/show/<id>

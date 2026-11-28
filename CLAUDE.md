@@ -1,4 +1,4 @@
-# CLAUDE.md — Paper Pipeline
+# CLAUDE.md — LitAuto (Literature Automation)
 
 Context for any Claude session working in this repo. Read `PLAN.md` for full
 design and rationale; this is the fast orientation.
@@ -50,13 +50,20 @@ forever.
 ## Environment
 
 - **uv-managed.** `pyproject.toml` + `uv.lock`, venv at `.venv/`. Set up with
-  `uv sync`. launchd / any daemon must call the interpreter by absolute path
-  (`.venv/bin/python`), not a bare `python`.
-- Deps: slack_bolt, pymupdf / pymupdf4llm, requests, fastembed, numpy, pyyaml.
-- **Headless Claude Code gotcha:** launchd runs with a minimal PATH and no login
-  shell — `claude` is often not-found or unauthenticated there. Always invoke
-  `claude` by absolute path and ensure the daemon context can reach its auth.
-  This is the most likely cause of silent breakage.
+  `uv sync --extra podcast`. Services call the venv interpreter by absolute path.
+- **Cross-platform (macOS, Linux, Windows).** CI (`.github/workflows/ci.yml`)
+  installs and tests on all three. Keep it that way: `encoding="utf-8"` on every
+  file read/write and text subprocess; no OS-only tools (HEIC via `pillow-heif`,
+  ffmpeg via `imageio-ffmpeg`); Kokoro on MLX only on Apple Silicon, PyTorch
+  `kokoro` elsewhere (`podcast_audio.use_mlx`).
+- Deps: slack_bolt, pymupdf4llm, requests, fastembed, numpy, pyyaml, pillow,
+  pillow-heif; `podcast` extra: mlx-audio | kokoro, misaki, soundfile,
+  imageio-ffmpeg, playwright.
+- **Headless Claude Code gotcha:** background services run with a minimal PATH
+  and no login shell. `config.claude_bin()` uses `node.claude_bin` if set, else
+  `shutil.which("claude")`; `src/service.py` writes the PATH it saw (python +
+  claude dirs) into the service. Re-run `python -m src.service install` if
+  Claude Code moves.
 
 ## Vault + template
 
@@ -104,7 +111,7 @@ Same channel, image drop instead of PDF/DOI (a conference poster photo or a
 photo of a talk slide — no PDF, no DOI, no fulltext exists for either).
 
 1. Slack drop (image; mimetype `image/*` or a known image extension) → download.
-2. HEIC/HEIF (iPhone default) → JPG via macOS `sips`.
+2. HEIC/HEIF (iPhone default) → JPG via `pillow-heif` (any OS).
 3. `poster_node.py`: headless `claude -p "/poster-node" --model claude-sonnet-4-6
    --allowedTools Read` — the prompt gives an absolute image path and the skill
    Reads it directly (vision). `--allowedTools Read` is load-bearing: it
@@ -144,12 +151,14 @@ Offline CLI (no Slack): `uv run python -m src.process_poster /path/to/image.jpg
 
 ## Runtime & availability
 
-Listener runs on the Mac (Socket Mode). Real-time processing needs the Mac awake;
-Socket Mode does **not** replay missed events. Nothing is lost, though: the Slack
-channel is the durable queue, and `catchup.py` reconciles anything dropped while
-the Mac was off (on launchd start, a periodic timer, and wake-from-sleep) using
-the `state.json` last-processed timestamp. The Mac is in the loop regardless
-because the vault write and the Sonnet node both live here.
+One background service per OS, installed by `python -m src.service install`
+(launchd `com.litauto.listener` / systemd user unit `litauto` /
+Task Scheduler task `litauto` running `src/supervise.py`). It runs the
+listener (Socket Mode), which also runs catch-up at start and hourly in a
+thread; there is no separate timer service. Socket Mode does **not** replay
+missed events, but nothing is lost: Slack is the durable queue and `catchup.py`
+reconciles from the `state.json` cursor. The watchdog exits the process when the
+socket is stuck; the service manager (or `supervise.py`) restarts it.
 
 ## Per-podcast flow
 
@@ -165,7 +174,7 @@ because the vault write and the Sonnet node both live here.
    thread and keep the MP3.
 
 Offline: `uv run python -m src.podcast <note.md> --no-upload`. Deps: `uv sync
---extra drive --extra podcast`. Skill source `skills/paper-podcast/SKILL.md`
+--extra podcast`. Skill source `skills/paper-podcast/SKILL.md`
 (copy to `~/.claude/skills/`).
 
 ## Repo layout
@@ -174,25 +183,27 @@ Offline: `uv run python -m src.podcast <note.md> --no-upload`. Deps: `uv sync
 src/            pipeline modules (see PLAN.md for each)
 templates/      note_layout.md — derived from ZI_Template.md
                 poster_layout.md — poster/slide variant, no fulltext section
-launchd/        com.user.paperpipeline.listener.plist
+src/setup.py    setup wizard ; src/service.py background service per OS
+.claude/skills/setup-pipeline/   "set me up" assistant skill (project skill)
+.github/workflows/ci.yml         tests on macOS, Linux, Windows
+slack_manifest.yaml              Slack app manifest
 pyproject.toml  uv project + deps ; uv.lock ; .venv/ (gitignored)
 config.yaml     paths + settings (gitignored)
 .env            secrets (gitignored)
 state.json      last-processed Slack ts (gitignored)
 ~/.claude/skills/paper-node/SKILL.md    the Sonnet extraction skill (papers)
 ~/.claude/skills/poster-node/SKILL.md   the vision extraction skill (posters/slides)
+~/.claude/skills/paper-podcast/SKILL.md the podcast script skill
+(sources in skills/; setup copies them into ~/.claude/skills/)
 ```
 
 ## Status
 
-**Built and validated** (2026-07-07). All 13 `src/` modules import; the
-deterministic core + live Claude node + fastembed related-links + sufficiency
-gate were tested end-to-end on a synthetic PDF into an isolated temp vault. uv
-env synced; 19 topic stubs in the vault; `paper-node` skill installed. Remaining
-before it runs for real: the user creates the **Slack app + private channel +
-tokens** (see `README.md` §2–3) and fills `config.yaml → slack.channel_id` +
-`.env`. Google Drive staging is optional/off. Not yet done: run under launchd,
-first real drop test.
+**In daily use** on the author's Mac (papers, posters, on-demand podcasts with
+Spotify upload). 2026-11-28: made cross-platform with a setup wizard, a "set me
+up" skill, one service per OS and CI on macOS/Linux/Windows; Linux/Windows have
+CI coverage but no real-machine run yet. Pending: remove the legacy Drive/
+NotebookLM staging once the Spotify publish fix is confirmed.
 
 ## Conventions
 

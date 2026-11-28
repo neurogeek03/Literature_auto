@@ -47,3 +47,6 @@ Thumbs.db
 # NOTE: tests/ are intentionally NOT ignored here so they ship with the repo.
 # If you keep committed demo images for the README, whitelist them explicitly, e.g.:
 #   !docs/demo.gif
+
+# --- Personal Claude Code settings (paths on your machine) ----------------------
+.claude/settings.local.json

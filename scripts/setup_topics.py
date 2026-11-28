@@ -81,7 +81,7 @@ def write_topics_block(taxonomy: dict[str, list[dict]]) -> None:
         raise SystemExit(
             f"{CONFIG_PATH} not found. Run `cp config.example.yaml config.yaml` first."
         )
-    text = CONFIG_PATH.read_text()
+    text = CONFIG_PATH.read_text(encoding="utf-8")
     block = taxonomy_to_yaml(taxonomy)
     if TOPICS_START in text and TOPICS_END in text:
         pattern = re.compile(
@@ -93,7 +93,7 @@ def write_topics_block(taxonomy: dict[str, list[dict]]) -> None:
         if not text.endswith("\n"):
             text += "\n"
         text += "\n" + block
-    CONFIG_PATH.write_text(text)
+    CONFIG_PATH.write_text(text, encoding="utf-8")
     print(f"Wrote topics block to {CONFIG_PATH}")
 
 
@@ -151,7 +151,7 @@ def import_from_vault(vault: Path) -> dict[str, list[dict]]:
     part_of = re.compile(r"Part of \[\[topics/([^\]]+)\]\]")
     child_of: dict[str, str] = {}
     for p in sorted(stubs):
-        m = part_of.search(p.read_text())
+        m = part_of.search(p.read_text(encoding="utf-8"))
         if m:
             child_of[p.stem] = m.group(1).strip()
 
@@ -194,14 +194,14 @@ def materialize_stubs(vault: Path, taxonomy: dict[str, list[dict]]) -> int:
     for family, children in taxonomy.items():
         hub = td / f"{family}.md"
         if not hub.exists():
-            hub.write_text(f"> [!topic] {family}\n")
+            hub.write_text(f"> [!topic] {family}\n", encoding="utf-8")
             created += 1
         for child in children:
             leaf = td / f"{child['slug']}.md"
             if not leaf.exists():
                 leaf.write_text(
                     f"> [!topic] {child['slug']}\n> Part of [[topics/{family}]]\n"
-                )
+                , encoding="utf-8")
                 created += 1
     return created
 
@@ -219,7 +219,7 @@ def update_skill(path: Path, leaves: list[dict]) -> bool:
     """Rewrite the region between the TOPICS:auto markers in one SKILL.md."""
     if not path.exists():
         return False
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     start = text.find(SKILL_START)
     end = text.find(SKILL_END)
     if start == -1 or end == -1 or end < start:
@@ -231,7 +231,7 @@ def update_skill(path: Path, leaves: list[dict]) -> bool:
     opening_line = text[start : text.find("\n", start)]
     new_block = _skill_vocab_block(leaves, opening_line)
     new_text = text[:start] + new_block + text[end + len(SKILL_END) :]
-    path.write_text(new_text)
+    path.write_text(new_text, encoding="utf-8")
     return True
 
 

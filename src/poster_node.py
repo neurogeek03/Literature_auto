@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import CONFIG
+from .config import CONFIG, claude_bin
 
 
 @dataclass
@@ -90,7 +90,7 @@ def run_poster_node(
         f"Image path: {Path(image_path).resolve()}\n"
     )
     cmd = [
-        ncfg["claude_bin"], "-p", "--model", ncfg["model"],
+        claude_bin(), "-p", "--model", ncfg["model"],
         "--allowedTools", "Read",
     ]
     try:
@@ -98,11 +98,11 @@ def run_poster_node(
             cmd,
             input=prompt,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             timeout=int(ncfg.get("timeout_seconds", 180)),
         )
     except FileNotFoundError:
-        return PosterResult(error=f"claude not found at {ncfg['claude_bin']}")
+        return PosterResult(error=f"claude not found at {claude_bin()}")
     except subprocess.TimeoutExpired:
         return PosterResult(error="claude timed out")
 
