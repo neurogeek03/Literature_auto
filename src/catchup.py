@@ -1,4 +1,4 @@
-"""Reconcile papers dropped while the Mac was off.
+"""Reconcile papers dropped while the computer was off.
 
 Slack is the durable queue: on startup (and callable on a timer) we read channel
 history since the last-processed timestamp and run anything we missed through the
@@ -43,7 +43,7 @@ def run_catchup(client) -> int:
 
 
 def main() -> None:
-    """Standalone entry point for the periodic launchd timer. Builds a Web-API-only
+    """Standalone catch-up (the listener also runs this hourly). Builds a Web-API-only
     Slack client (no Socket Mode) and reconciles anything the live listener missed.
     Safe to run alongside the listener: the MARKER reaction dedups already-processed
     messages, and note writes are idempotent."""

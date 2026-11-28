@@ -81,7 +81,7 @@ def build_index() -> dict:
     index: dict = {}
     if idx_path.exists():
         try:
-            index = json.loads(idx_path.read_text())
+            index = json.loads(idx_path.read_text(encoding="utf-8"))
         except Exception:
             index = {}
 
@@ -92,7 +92,7 @@ def build_index() -> dict:
     for f in _note_files():
         ck = _citekey_from_file(f)
         current_keys.add(ck)
-        md = f.read_text(errors="ignore")
+        md = f.read_text(errors="ignore", encoding="utf-8")
         text = extract_embed_text(md)
         h = hashlib.sha1(text.encode("utf-8")).hexdigest()
         cached = entries.get(ck)
@@ -111,7 +111,7 @@ def build_index() -> dict:
             entries[ck]["vector"] = vec.tolist()
 
     index = {"model": CONFIG["related"]["model"], "entries": entries}
-    idx_path.write_text(json.dumps(index))
+    idx_path.write_text(json.dumps(index), encoding="utf-8")
     return index
 
 
@@ -147,7 +147,7 @@ def find_similar_preprint(meta, query_text: str, min_sim: float = 0.95):
         p = notes_dir() / f"@{ck}.md"
         if note_render._fm_pub_type(p) != "preprint":
             continue
-        txt = p.read_text(errors="ignore")
+        txt = p.read_text(errors="ignore", encoding="utf-8")
         ma = note_render._NOTE_AUTHORS_RE.search(txt)
         note_last = note_render._last_name(ma.group(1).split(";")[0]) if ma else ""
         if want_last and note_last and want_last == note_last:

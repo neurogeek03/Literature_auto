@@ -180,7 +180,11 @@ silent no-op.
 `build_index.py` embeds each vault note incrementally (only new/changed) and
 caches vectors, so related-links matching stays fast and current.
 
-### Runtime & availability (does my Mac have to be on?)
+### Runtime & availability
+
+> Update 2026-11-28: the pipeline now runs on macOS, Linux and Windows with one
+> background service per OS (`src/service.py`); catch-up runs inside the listener.
+> See CLAUDE.md "Runtime & availability". The Mac-specific notes below are historical. (does my Mac have to be on?)
 
 The Slack listener runs **on the Mac** (Socket Mode over a local WebSocket), so:
 

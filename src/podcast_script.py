@@ -8,7 +8,7 @@ import json
 import re
 import subprocess
 
-from .config import CONFIG, resolve_path
+from .config import CONFIG, claude_bin, resolve_path
 
 _MAX_CHARS = 60_000
 _BAD_LINE = re.compile(r"[0-9%±×→~/=<>&#*_\[\]{}|]")
@@ -31,12 +31,12 @@ def _claude(phase: str, body: str) -> str:
     # Opus safeguards can false-flag biology papers; then try the next model.
     for model in [pc["model"]] + pc.get("fallback_models", []):
         proc = subprocess.run(
-            [CONFIG["node"]["claude_bin"], "-p", "--model", model],
-            input=prompt, capture_output=True, text=True,
+            [claude_bin(), "-p", "--model", model],
+            input=prompt, capture_output=True, text=True, encoding="utf-8",
             timeout=int(pc.get("timeout_seconds", 1200)),
         )
         out = proc.stdout or proc.stderr
-        (d / f"last_{phase}.txt").write_text(f"[{model}]\n{out}")  # for debugging
+        (d / f"last_{phase}.txt").write_text(f"[{model}]\n{out}", encoding="utf-8")  # for debugging
         if proc.returncode == 0 and _usable(phase, proc.stdout):
             return proc.stdout
     raise RuntimeError(f"claude ({phase}) gave no usable output: {out.strip()[:300]}")

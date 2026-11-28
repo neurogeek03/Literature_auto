@@ -13,7 +13,7 @@ def _load_env(path: Path) -> None:
     """Minimal .env loader (no external dep). Does not override existing env vars."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -33,13 +33,21 @@ def load_config() -> dict:
     cfg_path = ROOT / "config.yaml"
     if not cfg_path.exists():
         cfg_path = ROOT / "config.example.yaml"
-    cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     cfg["_root"] = str(ROOT)
     return cfg
 
 
 # Loaded once on import; cheap.
 CONFIG = load_config()
+
+
+def claude_bin() -> str:
+    """Claude Code CLI: config value if set, else found on PATH (claude.cmd on Windows)."""
+    import shutil
+
+    configured = (CONFIG.get("node") or {}).get("claude_bin") or ""
+    return configured or shutil.which("claude") or "claude"
 
 
 def vault_dir() -> Path:

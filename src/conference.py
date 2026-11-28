@@ -150,4 +150,4 @@ def ensure_stub(slug: str) -> None:
     stub.write_text(
         f"> [!topic] {slug}\n"
         f"> Part of [[topics/conferences]]\n"
-    )
+    , encoding="utf-8")

@@ -1,151 +1,230 @@
 # Literature automation
-### Save, link and query all literature you come across through one Slack message 
+### Save, link and query all literature you come across through one Slack message
 
-**Drop a paper in Slack → get a structured, cross-linked Obsidian literature note back.** A self-hosted, mostly-deterministic pipeline that turns a PDF, a DOI/URL, or a phone photo of a conference poster into a clean Markdown note wired into a topic knowledge graph — with a single, tightly-scoped LLM step doing the only part that actually needs a model.
+**Drop a paper in Slack → get a structured, cross-linked Obsidian literature note back.
+Reply `podcast` → get a two-host audio episode about it.**
+
+Works on **macOS, Linux and Windows**. Runs on your own computer with your own Slack,
+your own [Obsidian](https://obsidian.md) vault and your own [Claude Code](https://docs.claude.com/en/docs/claude-code)
+subscription. No coding needed to set it up.
 
 <!-- ![demo](docs/demo.gif) — add once you record the demo GIF -->
-<!-- TODO: record a 10–15s screen capture: drop a PDF in Slack → note appears in Obsidian with topic links. Save as docs/demo.gif and whitelist it in .gitignore. -->
 
 ---
 
-## Why it's an agent system
+## What it does
 
-This is an autonomous, event-driven agent with a deliberately **small** LLM surface. The design philosophy is that an agent system is more trustworthy when the model is fenced into the one node that genuinely needs judgment and everything else is deterministic plumbing.
+| You do this in Slack | You get back |
+|---|---|
+| Drop a **PDF**, paste a **DOI** or a journal **link** | A note in your Obsidian vault: title, authors, key points, your topic tags, links to related papers you've already saved, code/data links, and the full text. A summary card in the Slack thread. |
+| Drop a **photo of a poster or talk slide** | The same kind of note, read from the image. |
+| Reply **`podcast`** under a paper's card | A ~25-minute, two-host episode about the paper, posted as an MP3 in the thread. |
+| Reply **`podcast short`**, **`podcast 15 min critique`**, **`podcast focus on the statistics`** … | The episode shaped your way: length (`short`, `long`, `N min`), format (`critique`, `debate`) and anything you want it to focus on. |
 
-- **Shared state as the control plane.** A single `state.json` holds the last-processed Slack timestamp. Every entry point — the live listener and the catch-up reconciler — reads and advances the same cursor, so the system has one authoritative notion of "what's done."
-- **Slack as a durable queue + failure recovery.** Messages aren't held in memory. Slack *is* the queue. When the machine is asleep or offline, nothing is lost: on startup (and on a timer) `catchup.py` replays channel history since the state cursor through the **exact same handler** the live listener uses, and an emoji-reaction marker dedupes anything already processed. Identical treatment online or recovered.
-- **A hard determinism boundary.** Metadata resolution, full-text extraction, code-link detection, embedding/related-note ranking, preprint↔published matching, and note rendering are all pure functions: same input → same output, no model. **Exactly one node is an LLM agent** — a headless Claude Code call (`node.py` / `poster_node.py`) that reads the full text (or the poster image) and returns key-point bullets plus 1–3 topic tags from a fixed vocabulary. One call, two structured outputs, nothing else delegated to the model.
-- **Semantic cross-linking with local embeddings.** `related.py` uses [fastembed](https://github.com/qdrant/fastembed) (BAAI `bge-small-en-v1.5` by default) + cosine similarity to find the most related existing notes and wire them into the new one. The vault index is cached and rebuilt incrementally — only new/changed notes are re-embedded.
-- **Preprint↔published de-duplication.** When a published paper arrives that supersedes a preprint already in the vault, the pipeline detects it — first via DOI relations (Crossref `has-preprint` / OpenAlex), then via a tightly-gated fallback (exact normalized title **and** matching first-author surname) — and **surgically updates the existing note in place** (flips `preprint`→`peer-reviewed`, refreshes metadata, renames the citekey) while preserving the model-generated summary and your own reading notes.
-- **Phone-photo poster/slide capture.** Snap a conference poster or a talk slide, drop the photo in Slack, and a vision variant of the same node (`--allowedTools Read` pre-authorizes exactly the one tool the headless run needs) extracts title/authors/venue plus key points — no DOI, no PDF required.
-- **Fully self-hosted, bring-your-own-keys.** Runs on your own machine against your own Slack app, your own Obsidian vault, and your own Claude Code subscription (via `claude -p`, not the API). No managed service, no third-party data egress beyond public metadata lookups (Crossref/OpenAlex/Unpaywall) and the optional Google Drive staging step.
+Anything you drop while your computer is off is picked up the next time it starts.
+Optionally, episodes can also be published to your own **Spotify for Creators** show
+(most people just listen in Slack).
 
-## Architecture
+## Quick start
+
+You need: a Slack workspace where you can add apps, [Obsidian](https://obsidian.md)
+(make an empty vault), and a Claude subscription.
+
+1. **Install two tools** (once):
+   - [uv](https://docs.astral.sh/uv/getting-started/installation/) (runs the pipeline's Python for you)
+   - [Claude Code](https://docs.claude.com/en/docs/claude-code), then type `claude` in a terminal once to log in
+2. **Download the pipeline:**
+   ```bash
+   git clone https://github.com/neurogeek03/Literature_auto.git
+   cd Literature_auto
+   ```
+   (No git? Use the green **Code → Download ZIP** button on GitHub and unzip it.)
+3. **Let Claude set it up.** In that folder, type `claude` and say **"set me up"**.
+   It walks you through everything: your vault, the Slack app (from the included
+   [manifest](slack_manifest.yaml)), your research topics, podcasts, and running in the background.
+   Prefer a plain questionnaire? Run `uv run python -m src.setup` instead.
+4. **Drop a paper** in your Slack channel. A note appears in Obsidian within a minute or two.
+5. **Reply `podcast`** under the paper's card. The episode arrives in about 10 minutes.
+
+## How it works
 
 ```mermaid
 flowchart TD
-    SLACK["Slack channel<br/>(durable queue)"]
-    STATE[("state.json<br/>cursor")]
-    LISTEN["slack_listener.py<br/>Socket Mode"]
-    CATCH["catchup.py<br/>replays missed drops"]
-
-    SLACK --> LISTEN
-    SLACK --> CATCH
+    %% ---------- intake ----------
+    DROP(["Slack: PDF / DOI / link"])
+    IMG(["Slack: poster or slide photo"])
+    REPLY(["Slack thread reply: podcast ..."])
+    LISTEN["slack_listener.py<br/>live listener + hourly catch-up"]
+    STATE[("state.json<br/>last message handled")]
+    DROP --> LISTEN
+    IMG --> LISTEN
+    REPLY --> LISTEN
     LISTEN <--> STATE
-    CATCH <--> STATE
-    LISTEN --> META
-    CATCH --> META
 
-    subgraph ORCH["process_paper.py &mdash; orchestrator (deterministic except one node)"]
+    %% ---------- paper -> note ----------
+    subgraph PAPER["Paper to note (process_paper.py)"]
         direction TB
         META["metadata.py<br/>DOI to Crossref / OpenAlex"]
-        FULL["fulltext.py<br/>PDF to Markdown + gate"]
+        FULL["fulltext.py<br/>PDF to Markdown"]
+        GATE{"enough full text?"}
         CODE["codelinks.py<br/>code / data links"]
-        REL["related.py<br/>fastembed + cosine"]
-        NODE["node.py<br/>HEADLESS CLAUDE CODE<br/>key points + topic tags"]
-        REND["note_render.py<br/>template + preprint/published dedup"]
-        META --> FULL --> CODE --> REL --> NODE --> REND
+        REL["related.py<br/>local embeddings: related notes"]
+        NODE["node.py<br/>CLAUDE: key points + topics"]
+        META --> FULL --> GATE
+        GATE -- yes --> CODE --> REL --> NODE
     end
+    LISTEN --> META
+    GATE -- no --> ASK["Slack: please send the full PDF"]
 
-    IMG["Image drop<br/>poster / slide photo"] --> PPOST["process_poster.py"]
-    PPOST --> PNODE["poster_node.py<br/>VISION LLM NODE"]
+    subgraph POSTER["Poster / slide to note (process_poster.py)"]
+        PNODE["poster_node.py<br/>CLAUDE (vision): title, authors, key points"]
+    end
+    LISTEN --> PNODE
+
+    REND["note_render.py<br/>write note, update preprint to published"]
+    NODE --> REND
     PNODE --> REND
+    REND --> VAULT[("Obsidian vault<br/>notes + topic graph")]
+    REND --> CARD["slack_post.py<br/>summary card in the thread"]
 
-    REND --> VAULT[("Obsidian vault note<br/>cross-linked topic graph")]
-    REND --> POST["slack_post.py<br/>reply card / prompt / error"]
-    REND -. optional .-> DRIVE["drive.py<br/>Google Drive / NotebookLM"]
+    %% ---------- podcast ----------
+    subgraph POD["Podcast (podcast.py, runs in its own process)"]
+        direction TB
+        FIND["find the paper's note<br/>from the thread's card"]
+        SCRIPT["podcast_script.py<br/>CLAUDE: outline, draft, revise"]
+        CHECK{"lines easy to read aloud?"}
+        FIX["CLAUDE: fix flagged lines"]
+        VOICE["podcast_audio.py<br/>Kokoro voices, line by line"]
+        MP3["ffmpeg: MP3"]
+        FIND --> SCRIPT --> CHECK
+        CHECK -- no --> FIX --> VOICE
+        CHECK -- yes --> VOICE --> MP3
+    end
+    LISTEN --> FIND
+    VAULT -. full text .-> FIND
+    MP3 --> SLACKMP3["Slack: MP3 in the thread"]
+    MP3 -. optional .-> SPOT["spotify_upload.py<br/>Spotify for Creators"]
 
     classDef llm fill:#2E5D43,stroke:#17281F,color:#F7F4EB;
-    class NODE,PNODE llm;
+    classDef optional stroke-dasharray: 5 5;
+    class NODE,PNODE,SCRIPT,FIX llm;
+    class SPOT optional;
 ```
 
-**Module map**
+Green boxes are the only steps that use an AI model (Claude Code, on your own
+subscription). Everything else gives the same output for the same input.
 
-| Module | Role | Deterministic? |
-|--------|------|----------------|
-| `slack_listener.py` | Socket Mode listener; watches the channel for PDFs / DOI-URL messages | yes |
-| `catchup.py` | Replays drops missed while offline through the same handler | yes |
-| `process_paper.py` | Orchestrates the paper path end-to-end | yes (except node) |
-| `process_poster.py` | Orchestrates the image (poster/slide) path | yes (except node) |
-| `metadata.py` | DOI → Crossref/OpenAlex → fields + citekey; preprint detection | yes |
-| `fulltext.py` | PDF → Markdown + a word-count sufficiency gate | yes |
-| `codelinks.py` | Regex extraction of code/data availability | yes |
-| `related.py` | fastembed embeddings + cosine similarity; incremental index | yes |
-| `node.py` | **Headless Claude Code**: full text → key points + topic tags | **no (LLM)** |
-| `poster_node.py` | **Headless Claude Code (vision)**: image → fields + key points + tags | **no (LLM)** |
-| `note_render.py` | Template → vault note; preprint↔published in-place update | yes |
-| `conference.py` | Parses a typed caption into a whitelisted conference tag | yes |
-| `drive.py` | Optional Google Drive staging for NotebookLM | yes |
-| `slack_post.py` | Builds every reply (success / prompt / error) | yes |
-| `build_index.py` | CLI for a full manual re-embed of the vault | yes |
-| `config.py` | Loads `config.yaml` + `.env`; single source of paths/settings | — |
+**In words:**
+1. **Intake.** The listener watches one private Slack channel. If your computer was off,
+   it catches up on missed messages at start and every hour, using `state.json` and a
+   check-mark reaction so nothing is processed twice.
+2. **Paper to note.** Metadata comes from Crossref/OpenAlex; the PDF becomes Markdown.
+   If only an abstract or a paywall page came through, it asks you for the full PDF
+   instead of writing a thin note. Related notes are found with a small local embedding
+   model. Claude writes the key points and picks 1-3 of *your* topics. The note is written
+   into your vault and a card is posted in the thread.
+3. **Podcast (on request).** Your `podcast` reply starts a separate job. Claude writes the
+   script the way NotebookLM does (outline, draft, then a critique-and-revise pass that
+   adds natural back-and-forth), a quick check catches anything the voice would stumble on,
+   [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) voices it on your computer, and the
+   MP3 is posted in the thread (and optionally published to Spotify). The local copy is
+   then deleted.
 
-## Features
+## Settings
 
-- Slack-native intake: drop a PDF, paste a DOI/URL, or snap a poster photo.
-- Deterministic metadata (Crossref/OpenAlex), clean citekeys, OA link resolution.
-- Full text extracted to Markdown with a sufficiency gate that asks for the full PDF when a page is too thin.
-- Local semantic cross-linking into an Obsidian topic knowledge graph.
-- Preprint→published supersession that updates notes in place without losing your edits.
-- Code/data availability auto-extraction.
-- Offline-safe: anything dropped while the machine is off is reconciled on wake.
-- Runs headless on macOS via `launchd` (listener + timer-driven catch-up).
+Everything lives in `config.yaml` (created by setup, private to you), grouped from
+must-have to optional:
 
-## Setup
+| Group | What | Default |
+|---|---|---|
+| **Core** | vault folder, Slack channel, your email, your topics | set by setup |
+| **Tuning** | full-text threshold, related-note settings, Claude model | sensible defaults |
+| **Podcasts** | on/off, length, voices, pauses | on, 25 min |
+| **Spotify** | publish episodes to your show | off |
 
-Requires Python ≥ 3.11, [uv](https://docs.astral.sh/uv/), and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) on your PATH.
+Re-run setup any time to change answers (`claude` → "set me up", or
+`uv run python -m src.setup`); add topics with `uv run python scripts/setup_topics.py --add`.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Nothing happens after a drop | `uv run python -m src.service status`; logs are in `.cache/listener.err.log`. |
+| Card says the node was skipped / "claude not found" | Type `claude` once in a terminal to log in, then `uv run python -m src.service install` again. |
+| "Couldn't post it here" for a podcast | The Slack app needs the `files:write` permission (OAuth & Permissions → reinstall). |
+| Spotify upload failed | Run `uv run python -m src.spotify_upload --login` again; the MP3 is still in Slack. |
+| Podcast failed | The reason is posted in the thread; details in `.cache/podcast.log`. Reply `podcast` to retry. |
+| Linux: stops when you log out | `loginctl enable-linger $USER` |
+
+---
+
+## For developers
+
+### Design
+
+An event-driven agent with a deliberately **small** model surface: the model is fenced
+into the few steps that need judgment, everything else is deterministic plumbing.
+
+- **Slack is the durable queue.** Nothing is held in memory; `catchup.py` replays channel
+  history since the `state.json` cursor through the same handler the live listener uses,
+  and a reaction marker dedups. Thread replies never move the cursor.
+- **Hard determinism boundary.** Metadata, full-text extraction, code links, embeddings,
+  preprint↔published matching and rendering are pure functions. LLM steps are headless
+  Claude Code skills (`claude -p "/<skill>"`) with strict output contracts: `paper-node`,
+  `poster-node` (vision, `--allowedTools Read`), and the on-demand `paper-podcast`.
+- **Preprint↔published de-duplication.** Detected via Crossref/OpenAlex relations, then a
+  tightly gated title + first-author fallback; the note is updated in place, keeping the
+  summary and your own notes.
+- **Podcasts in their own process**, so a listener restart can't kill a long job. Script
+  phases are validated by content (not exit code) and cached in `.cache/podcasts/` so audio
+  can be re-voiced with `--reuse-script`.
+- **Cross-platform.** One background service per OS (`src/service.py`: launchd, systemd
+  user unit, Task Scheduler + `src/supervise.py`); Kokoro runs on MLX on Apple Silicon and
+  PyTorch elsewhere; ffmpeg is bundled (`imageio-ffmpeg`); HEIC photos via `pillow-heif`.
+
+### Module map
+
+| Module | Role | Model? |
+|--------|------|--------|
+| `slack_listener.py` | Socket Mode listener, routing, `podcast` replies, hourly catch-up, watchdog | — |
+| `catchup.py` | Replays drops missed while offline through the same handler | — |
+| `process_paper.py` / `process_poster.py` | Orchestrate the paper / image paths | — |
+| `metadata.py` | DOI → Crossref/OpenAlex → fields + citekey; preprint detection | — |
+| `fulltext.py` | PDF → Markdown + sufficiency gate | — |
+| `codelinks.py` | Code/data availability links | — |
+| `related.py` | fastembed embeddings + cosine; incremental vault index | — |
+| `node.py` | Full text → key points + topic tags | **Claude** |
+| `poster_node.py` | Image → fields + key points + tags | **Claude (vision)** |
+| `note_render.py` | Template → vault note; preprint↔published update | — |
+| `conference.py` | Caption → whitelisted conference tag | — |
+| `podcast.py` | Podcast job: command parsing, note reading, delivery | — |
+| `podcast_script.py` | Outline → draft → revise → fix, with content validation | **Claude** |
+| `podcast_audio.py` | Kokoro (MLX or PyTorch) + pauses + ffmpeg MP3 | — |
+| `spotify_upload.py` | Playwright upload, Claude-in-Chrome fallback | (fallback only) |
+| `slack_post.py` | Every Slack reply, file upload | — |
+| `setup.py` / `service.py` / `supervise.py` | Setup wizard; background service per OS | — |
+| `drive.py` | Legacy Google Drive staging for NotebookLM (off by default) | — |
+| `build_index.py` | Full manual re-embed of the vault | — |
+| `config.py` | Loads `config.yaml` + `.env`; finds the Claude CLI | — |
+
+Skills live in `skills/` (copied to `~/.claude/skills/` by setup); the setup assistant
+skill is in `.claude/skills/setup-pipeline/`.
+
+### Command line
 
 ```bash
-git clone <your-fork-url> paper-pipeline
-cd paper-pipeline
-uv sync                      # core deps
-# uv sync --extra drive      # optional: Google Drive / NotebookLM staging
-
-# 1. Secrets
-cp .env.example .env         # fill in SLACK_BOT_TOKEN and SLACK_APP_TOKEN
-
-# 2. Config
-cp config.example.yaml config.yaml   # set vault.path to your Obsidian vault
-
-# 3. Topic taxonomy (creates your topic stubs + graph colors)
-uv run python scripts/setup_topics.py
+uv sync --extra podcast                      # install (add --extra drive for legacy Drive staging)
+uv run python -m src.setup                   # setup wizard (re-runnable)
+uv run python -m src.service install|uninstall|status
+uv run python -m src.slack_listener          # run in the foreground instead
+uv run python -m src.process_paper paper.pdf --doi 10.xxxx/yyyy      # no Slack
+uv run python -m src.process_poster poster.jpg --prompt "ISMB 26"
+uv run python -m src.podcast "<vault>/@Author_Year.md" --focus "the statistics" --no-upload
+uv run python -m src.build_index             # full re-embed
+uv run python -m unittest discover tests     # tests (CI runs them on macOS, Linux, Windows)
 ```
-
-**Slack app** (about 5 minutes):
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest** → pick your workspace → paste [`slack_manifest.yaml`](slack_manifest.yaml) → **Create** → **Install to Workspace**.
-2. **Basic Information → App-Level Tokens → Generate**, with scope `connections:write`. Copy the `xapp-…` token into `.env` as `SLACK_APP_TOKEN`.
-3. **OAuth & Permissions**: copy the Bot User OAuth Token (`xoxb-…`) into `.env` as `SLACK_BOT_TOKEN`.
-4. In Slack, create a private channel and type `/invite @paper-pipeline`. Put its channel ID (channel details, bottom of the About tab) into `config.yaml` → `slack.channel_id`.
-
-Each person runs their own copy: the app only forwards messages to the listener on your own Mac, which writes to your vault with your Claude login.
-
-## Usage
-
-```bash
-# Live listener (foreground)
-uv run python -m src.slack_listener
-
-# Reconcile anything missed while offline
-uv run python -m src.catchup
-
-# Process a file directly, no Slack (handy for testing)
-uv run python -m src.process_paper /path/to/paper.pdf --doi 10.xxxx/yyyy
-uv run python -m src.process_poster /path/to/poster.jpg --prompt "ISMB 26 — poster by X lab"
-
-# Full manual re-embed of the vault index
-uv run python -m src.build_index
-
-# Podcast of a paper note (normally triggered by replying "podcast" in its Slack thread)
-uv sync --extra drive --extra podcast
-uv run python -m src.podcast "/path/to/vault/@Author_Year.md" --focus "the statistics" --no-upload
-uv run python -m src.spotify_upload --login   # one-time Spotify for Creators login
-```
-
-In Slack, reply in a paper's thread: `podcast`, `podcast short`, `podcast 15 min critique`,
-or `podcast focus on the sex differences`. Needs the `files:write` bot scope to post the MP3.
-
-For unattended operation on macOS, the `launchd/` folder contains sample `.plist` files for the listener and the catch-up timer — **edit the absolute paths in them to match where you cloned the repo** before loading with `launchctl`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Podcast prompt design adapts ideas from Local-NotebookLM,
+Open-NotebookLM, NotebookLlama, podcastfy and podcast-creator (see `skills/paper-podcast`).

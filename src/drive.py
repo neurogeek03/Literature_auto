@@ -33,7 +33,7 @@ def _service():
                 str(resolve_path("credentials.json")), _SCOPES
             )
             creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
+        token_path.write_text(creds.to_json(), encoding="utf-8")
     return build("drive", "v3", credentials=creds)
 
 

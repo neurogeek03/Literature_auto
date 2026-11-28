@@ -12,7 +12,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from .config import CONFIG, resolve_path
+from .config import CONFIG, claude_bin, resolve_path
 
 HOME = "https://creators.spotify.com/"
 PROFILE = ".cache/spotify_profile"
@@ -27,9 +27,13 @@ def _cfg() -> dict:
 
 
 def _browser(p, headless: bool):
-    return p.chromium.launch_persistent_context(
-        str(resolve_path(PROFILE)), channel="chrome", headless=headless,
-    )
+    """Installed Google Chrome if there is one, else Playwright's own Chromium
+    (`playwright install chromium`)."""
+    profile = str(resolve_path(PROFILE))
+    try:
+        return p.chromium.launch_persistent_context(profile, channel="chrome", headless=headless)
+    except Exception:
+        return p.chromium.launch_persistent_context(profile, headless=headless)
 
 
 def login() -> None:
@@ -110,9 +114,9 @@ def _claude_chrome_upload(mp3: Path, title: str, description: str) -> str:
         "anything else. Reply with one line: OK, ALREADY, or ERROR: <reason>."
     )
     proc = subprocess.run(
-        [CONFIG["node"]["claude_bin"], "-p", "--chrome", "--model", CONFIG["node"]["model"],
+        [claude_bin(), "-p", "--chrome", "--model", CONFIG["node"]["model"],
          "--allowedTools", "mcp__claude-in-chrome__*"],
-        input=prompt, capture_output=True, text=True, timeout=900,
+        input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=900,
     )
     out = (proc.stdout or "").strip().splitlines()
     last = out[-1] if out else (proc.stderr or "no output").strip()[:200]

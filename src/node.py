@@ -10,7 +10,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 
-from .config import CONFIG
+from .config import CONFIG, claude_bin
 
 # Cap what we pipe in so a giant supplement doesn't blow past context / argv.
 _MAX_CHARS = 60_000
@@ -63,17 +63,17 @@ def run_node(fulltext: str, valid_topics: set[str], focus_hint: str = "") -> Nod
         f"{focus_line}"
         "<paper>\n" + fulltext[:_MAX_CHARS] + "\n</paper>\n"
     )
-    cmd = [ncfg["claude_bin"], "-p", "--model", ncfg["model"]]
+    cmd = [claude_bin(), "-p", "--model", ncfg["model"]]
     try:
         proc = subprocess.run(
             cmd,
             input=prompt,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             timeout=int(ncfg.get("timeout_seconds", 180)),
         )
     except FileNotFoundError:
-        return NodeResult(error=f"claude not found at {ncfg['claude_bin']}")
+        return NodeResult(error=f"claude not found at {claude_bin()}")
     except subprocess.TimeoutExpired:
         return NodeResult(error="claude timed out")
 

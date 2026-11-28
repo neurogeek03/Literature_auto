@@ -45,7 +45,7 @@ def load_state() -> dict:
     p = _state_path()
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {"last_ts": "0"}
@@ -55,7 +55,7 @@ def save_last_ts(ts: str) -> None:
     state = load_state()
     if float(ts) > float(state.get("last_ts", "0")):
         state["last_ts"] = ts
-        _state_path().write_text(json.dumps(state))
+        _state_path().write_text(json.dumps(state), encoding="utf-8")
 
 
 # ----- helpers -----
@@ -70,9 +70,14 @@ def _bot_token() -> str:
     return os.environ["SLACK_BOT_TOKEN"]
 
 
+def safe_filename(name: str) -> str:
+    """Drop characters Windows (or any OS) won't allow in a filename."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .") or "file"
+
+
 def download_slack_file(file_obj: dict) -> Path:
     url = file_obj.get("url_private_download") or file_obj["url_private"]
-    dest = _work_dir() / (file_obj.get("id", "file") + "_" + file_obj.get("name", "paper.pdf"))
+    dest = _work_dir() / safe_filename(file_obj.get("id", "file") + "_" + file_obj.get("name", "paper.pdf"))
     r = requests.get(url, headers={"Authorization": f"Bearer {_bot_token()}"}, timeout=60)
     r.raise_for_status()
     dest.write_bytes(r.content)
@@ -212,6 +217,13 @@ def _note_from_thread(client, channel: str, thread_ts: str) -> Path | None:
 
 
 def _handle_podcast(client, channel: str, thread_ts: str, ts: str, text: str) -> None:
+    if not (CONFIG.get("podcast") or {}).get("enabled", True):
+        slack_post.send(
+            client, channel,
+            "Podcasts are turned off. Set `podcast: enabled: true` in config.yaml (or re-run setup).",
+            thread_ts=thread_ts,
+        )
+        return
     opts = podcast.parse_command(text)
     try:
         note = _note_from_thread(client, channel, thread_ts)
@@ -238,13 +250,17 @@ def _handle_podcast(client, channel: str, thread_ts: str, ts: str, text: str) ->
         thread_ts=thread_ts,
     )
     # Separate process: a listener restart (watchdog) must not kill a long job.
-    log = open(resolve_path(".cache/podcast.log"), "a")
-    subprocess.Popen(
-        [sys.executable, "-m", "src.podcast", str(note),
-         "--minutes", str(opts["minutes"]), "--format", opts["format"], "--focus", opts["focus"],
-         "--channel", channel, "--thread", thread_ts, "--reply-ts", ts],
-        cwd=CONFIG["_root"], stdout=log, stderr=log, start_new_session=True,
-    )
+    if os.name == "nt":
+        detach = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        detach = {"start_new_session": True}
+    with open(resolve_path(".cache/podcast.log"), "a", encoding="utf-8") as log:
+        subprocess.Popen(
+            [sys.executable, "-m", "src.podcast", str(note),
+             "--minutes", str(opts["minutes"]), "--format", opts["format"], "--focus", opts["focus"],
+             "--channel", channel, "--thread", thread_ts, "--reply-ts", ts],
+            cwd=CONFIG["_root"], stdout=log, stderr=log, **detach,
+        )
 
 
 def _run_and_reply(
@@ -467,6 +483,17 @@ def run() -> None:
 
     catchup.run_catchup(app.client)
     _record_healthy()
+
+    def _hourly_catchup():
+        # Replaces the separate timer service: one background process on every OS.
+        while True:
+            time.sleep(3600)
+            try:
+                catchup.run_catchup(app.client)
+            except Exception:
+                logging.exception("hourly catchup failed")
+
+    threading.Thread(target=_hourly_catchup, daemon=True, name="catchup").start()
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     _start_watchdog(handler)
     handler.start()

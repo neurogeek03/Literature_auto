@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,15 +38,16 @@ class PosterProcResult:
 
 
 def _convert_if_heic(path: Path) -> Path:
-    """HEIC/HEIF (the default on iPhone) -> JPG via macOS `sips`, so the image
-    is both readable by the vision call and portable once embedded in Obsidian."""
+    """HEIC/HEIF (the default on iPhone) -> JPG via pillow-heif (any OS), so the
+    image is both readable by the vision call and portable once embedded in Obsidian."""
     if path.suffix.lower() not in _HEIC_EXTS:
         return path
+    from PIL import Image
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
     out = path.with_suffix(".jpg")
-    subprocess.run(
-        ["sips", "-s", "format", "jpeg", str(path), "--out", str(out)],
-        check=True, capture_output=True,
-    )
+    Image.open(path).convert("RGB").save(out, "JPEG", quality=92)
     return out
 
 

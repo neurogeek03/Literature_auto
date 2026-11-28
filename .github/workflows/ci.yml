@@ -1,0 +1,56 @@
+# Install + test on macOS, Linux and Windows (no Slack, no Claude, no secrets).
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: System voice dependency (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+
+      - name: Install
+        run: uv sync --extra podcast
+
+      - name: Unit tests
+        run: uv run python -m unittest discover tests -v
+
+      - name: Every module imports
+        run: |
+          uv run python -c "
+          import importlib, pathlib
+          for f in sorted(pathlib.Path('src').glob('*.py')):
+              if f.stem != '__init__':
+                  importlib.import_module('src.' + f.stem)
+          print('all modules import')
+          "
+
+      - name: Voice two lines with Kokoro + encode MP3
+        run: |
+          uv run python -c "
+          from pathlib import Path
+          from src.podcast_audio import render_mp3, use_mlx
+          script = [{'speaker': 'A', 'text': 'Okay, so this study is about memory.'},
+                    {'speaker': 'B', 'text': 'Wait, really? Tell me more.'}]
+          secs = render_mp3(script, Path('smoke.mp3'))
+          assert Path('smoke.mp3').stat().st_size > 10_000, 'mp3 too small'
+          print(f'ok: {secs:.1f}s of audio, backend', 'mlx' if use_mlx() else 'pytorch')
+          "
